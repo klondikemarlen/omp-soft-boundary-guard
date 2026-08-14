@@ -2,7 +2,7 @@ import type { AdvisoryRecorder } from "../boundary/advisory.ts";
 import type { BoundaryClassifier, BoundaryClassificationResult } from "../boundary/classifier.ts";
 import { createOmpBoundaryClassifier } from "../boundary/omp-classifier.ts";
 import { isActiveBoundaryPolicy, type ActiveBoundaryPolicy } from "../boundary/policy.ts";
-import type { ExtensionAPI, ToolCallResult } from "./contract.ts";
+import type { ExtensionAPI, ToolCallResult, ToolInput } from "./contract.ts";
 import { AuthorizationState } from "./authorization-state.ts";
 import { currentCheckoutRoot } from "../git/current-checkout.ts";
 import { retryIdentity } from "../guard/authorization-key.ts";
@@ -134,6 +134,10 @@ function confirmationReason(handoff: AskHandoff, event: { input: Record<string, 
   return `Blocked ${handoff.action} targeting ${handoff.target}: confirmation is required. Command: ${event.input.command ?? "unavailable"}.`;
 }
 
+function inputResult(input: ToolInput | undefined): ToolCallResult {
+  return input ? { input } : undefined;
+}
+
 function requestConfirmation(
   authorization: AuthorizationState,
   pi: ExtensionAPI,
@@ -141,18 +145,19 @@ function requestConfirmation(
   event: { toolName: string; input: Record<string, unknown> },
   hasUI: boolean | undefined,
   identity: string,
+  revisedInput?: ToolInput,
 ): ToolCallResult {
   const reason = confirmationReason(handoff, event);
-  if (!hasUI) return;
+  if (!hasUI) return inputResult(revisedInput);
 
   const authorizationResult = authorization.consume(handoff.fingerprint);
-  if (authorizationResult === "authorized") return;
+  if (authorizationResult === "authorized") return inputResult(revisedInput);
   if (authorizationResult === "rejected") {
     return { block: true, reason: `${reason} The previous confirmation was not approved; no duplicate confirmation was requested.` };
   }
 
   const question = handoff.ask.questions[0].question;
-  if (authorization.consumeExternal(question)) return;
+  if (authorization.consumeExternal(question)) return inputResult(revisedInput);
 
   const authorizationDetail = authorizationResult === "mismatched"
     ? " An approval exists but does not match this exact retry."
@@ -178,8 +183,10 @@ export function createRepositoryBoundaryGuard(options: BoundaryGuardOptions = {}
       const activePolicy = isActiveBoundaryPolicy(configuredPolicy) ? configuredPolicy : undefined;
       const classifier = classifierFor(activePolicy, options, context, context.boundaryClassifier);
 
+      let revisedInput: ToolInput | undefined;
       try {
         const resolvedHandoff = repositoryMutationHandoff(event, context.cwd);
+        revisedInput = resolvedHandoff.input;
         let handoff = resolvedHandoff;
         let reusedHandoff = false;
         let scope: string | undefined;
@@ -216,20 +223,20 @@ export function createRepositoryBoundaryGuard(options: BoundaryGuardOptions = {}
           if (needsWarning && !options.enforce) console.warn(warningFor(handoff));
         }
 
-        if (handoff.decision === "allow") return;
+        if (handoff.decision === "allow") return inputResult(revisedInput);
         if (!options.enforce) {
           console.warn(warningFor(handoff));
-          return;
+          return inputResult(revisedInput);
         }
         scope ??= sessionScope(handoff, context.cwd);
         const identity = authorizationIdentity(authorization, event, context.cwd, scope);
-        return requestConfirmation(authorization, pi, handoff, event, context.hasUI, identity);
+        return requestConfirmation(authorization, pi, handoff, event, context.hasUI, identity, revisedInput);
       } catch {
         if (configuredPolicy) {
           recordGuardFailure(options.recorder, event);
-          return;
+          return inputResult(revisedInput);
         }
-        if (!options.enforce) return;
+        if (!options.enforce) return inputResult(revisedInput);
         return { block: true, reason: "Boundary guard failed before confirmation could be completed." };
       }
     });

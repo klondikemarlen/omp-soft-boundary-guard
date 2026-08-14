@@ -358,6 +358,59 @@ test("does not prompt same-origin issue creation", async () => {
   }
 });
 
+test("pins omitted GitHub device mutations to origin in fork and single-origin checkouts", async () => {
+  for (const [origin, hasUpstream] of [
+    [`git@github.com:${current}.git`, true],
+    [`https://github.com/${current}.git`, false],
+  ] as const) {
+    const repository = checkout(origin);
+    try {
+      if (hasUpstream) {
+        execFileSync("git", ["-C", repository, "remote", "add", "upstream", `https://github.com/${external}.git`]);
+      }
+      const input = {
+        path: "xd://github",
+        content: JSON.stringify({ op: "pr_create", title: "Pinned target", draft: true }),
+      };
+      const instance = guard({ enforce: false });
+      expect(await instance.handler({ toolName: "write", input }, context(repository))).toEqual({
+        input: {
+          ...input,
+          content: JSON.stringify({ op: "pr_create", title: "Pinned target", draft: true, repo: current }),
+        },
+      });
+      expect(instance.messages).toEqual([]);
+
+      if (hasUpstream) {
+        expect(await guard().handler(
+          {
+            toolName: "write",
+            input: { path: "xd://github", content: JSON.stringify({ op: "pr_create", repo: external }) },
+          },
+          context(repository),
+        )).toMatchObject({ block: true });
+      }
+    } finally {
+      rmSync(repository, { recursive: true, force: true });
+    }
+  }
+});
+
+test("leaves omitted GitHub device targets unresolved without a GitHub origin", async () => {
+  const repository = checkout("malformed");
+  try {
+    expect(await guard({ enforce: false }).handler(
+      {
+        toolName: "write",
+        input: { path: "xd://github", content: JSON.stringify({ op: "pr_create", title: "Unresolved target" }) },
+      },
+      context(repository),
+    )).toBeUndefined();
+  } finally {
+    rmSync(repository, { recursive: true, force: true });
+  }
+});
+
 test("passes registered and unresolved internal dispatches without prompting", async () => {
   const repository = checkout();
   try {

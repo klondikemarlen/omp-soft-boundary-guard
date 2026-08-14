@@ -1,4 +1,4 @@
-import type { ToolCallEvent } from "../extension/contract.ts";
+import type { ToolCallEvent, ToolInput } from "../extension/contract.ts";
 import { authorizationKey } from "./authorization-key.ts";
 import {
   confirmationQuestion,
@@ -18,7 +18,7 @@ export type AskPayload = {
 };
 
 export type RepositoryMutationHandoff =
-  | { decision: "allow"; action?: string; currentRepository?: string; target?: string }
+  | { decision: "allow"; action?: string; currentRepository?: string; target?: string; input?: ToolInput }
   | {
       decision: "ask";
       action: string;
@@ -27,6 +27,7 @@ export type RepositoryMutationHandoff =
       target: string;
       fingerprint: string;
       ask: AskPayload;
+      input?: ToolInput;
     };
 
 export function askHandoff(

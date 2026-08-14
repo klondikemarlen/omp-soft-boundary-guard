@@ -14,6 +14,8 @@ Static GraphQL queries and every GraphQL mutation pass through without a warning
 
 The current built-in boundary is the invoking session's normalized GitHub `origin`, or its canonical Git root when no GitHub origin exists. Tool `cwd`, shell `cd … &&`, and Git `-C` help resolve a target, but never redefine the boundary. Programmatic callers can opt into strict, one-shot OMP Ask enforcement with `createRepositoryBoundaryGuard({ enforce: true })`; the installed extension remains advisory.
 
+For recognized `xd://github` mutations that omit `repo`, the guard pins the tool's execution input to that normalized `origin`. This prevents another resolver from silently selecting a distinct configured remote such as `upstream`; explicit external repositories still follow the normal warning or strict Ask path.
+
 ## Handoff inspection
 
 `bun run handoff` reads `{"event":{"toolName":…,"input":…},"cwd":"…"}` from standard input and writes one JSON packet. Its `decision` is `allow` or `ask`; an `ask` packet includes the exact standard OMP Ask payload, active repository, resolved mutation target, action, and exact-retry fingerprint.

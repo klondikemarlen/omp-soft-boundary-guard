@@ -42,3 +42,14 @@ export function githubDeviceWrite(input: ToolInput): GitHubWrite | undefined {
     return undefined;
   }
 }
+
+export function pinGitHubDeviceRepository(input: ToolInput, repository: string): ToolInput | undefined {
+  if (input.path !== "xd://github" || typeof input.content !== "string") return undefined;
+  try {
+    const request = JSON.parse(input.content) as Record<string, unknown>;
+    if (typeof request.op !== "string" || !WRITE_OPERATIONS[request.op] || request.repo !== undefined) return undefined;
+    return { ...input, content: JSON.stringify({ ...request, repo: repository }) };
+  } catch {
+    return undefined;
+  }
+}

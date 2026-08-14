@@ -13,7 +13,10 @@ export type ToolResultEvent = {
   isError: boolean;
 };
 
-export type ToolCallResult = { block: true; reason: string } | undefined;
+export type ToolCallResult =
+  | { block: true; reason: string }
+  | { input: ToolInput }
+  | undefined;
 
 export type HookContext = RuntimeContext & {
   cwd: string;

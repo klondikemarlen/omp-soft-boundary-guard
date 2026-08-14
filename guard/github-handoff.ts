@@ -5,6 +5,7 @@ import { currentCheckoutRepository, currentCheckoutRoot } from "../git/current-c
 import { defaultPushRemote } from "../git/default-push-remote.ts";
 import { pushRepository } from "../git/push-repository.ts";
 import { gitPushWrite } from "../git/push-write.ts";
+import { pinGitHubDeviceRepository } from "../github/device-write.ts";
 import { remoteRepository } from "../github/remote-repository.ts";
 import { recognizedGitHubWrite } from "../github/recognized-write.ts";
 import type { GitHubWrite } from "../github/write.ts";
@@ -42,10 +43,13 @@ export function githubHandoff(event: ToolCallEvent, cwd: string): RepositoryMuta
   }
 
   const currentRepository = currentCheckoutRepository(cwd);
+  const revisedInput = write.target ? pinGitHubDeviceRepository(event.input, write.target) : undefined;
   const decision = guardDecision(write, currentRepository);
-  if (decision.allow) return { decision: "allow", action: write.action, currentRepository, target: write.target };
+  if (decision.allow) {
+    return { decision: "allow", action: write.action, currentRepository, target: write.target, input: revisedInput };
+  }
 
-  return askHandoff(
+  const handoff = askHandoff(
     decision.action,
     decision.target,
     event,
@@ -54,4 +58,5 @@ export function githubHandoff(event: ToolCallEvent, cwd: string): RepositoryMuta
     currentRepository,
     write.description,
   );
+  return revisedInput ? { ...handoff, input: revisedInput } : handoff;
 }

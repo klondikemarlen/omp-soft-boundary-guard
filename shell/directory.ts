@@ -3,6 +3,7 @@ import { isAbsolute, resolve } from "node:path";
 
 import type { ToolInput } from "../extension/contract.ts";
 import { shellCommandSegments } from "./commands.ts";
+import { executableIndex } from "./executable-index.ts";
 
 export type DirectoryResolution = string | { unresolved: true } | undefined;
 
@@ -14,8 +15,7 @@ function commandDirectory(command: string, cwd: string): DirectoryResolution {
   let current = cwd;
   let changed = false;
   for (const segment of shellCommandSegments(command)) {
-    let index = 0;
-    while (typeof segment.words[index] === "string" && /^[A-Za-z_][A-Za-z0-9_]*=/.test(segment.words[index]!)) index += 1;
+    const index = executableIndex(segment.words);
     const executable = segment.words[index];
     if (executable === "gh" || executable === "git") break;
     if (segment.nextOperator && !["&&", ";"].includes(segment.nextOperator)) return { unresolved: true };

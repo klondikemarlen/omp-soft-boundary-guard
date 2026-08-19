@@ -145,7 +145,7 @@ test("guards cross-repository Git mutations separately from remote issue approva
     toolName: "write",
     input: { path: "xd://github", content: JSON.stringify({ op: "issue_create", repo: external, title: "External report" }) },
   };
-  const gitEvent = { toolName: "bash", input: { command: "git -C . switch -c external-change", cwd: otherRepository } };
+  const gitEvent = { toolName: "bash", input: { command: "GIT_CONFIG_COUNT=0 git -C . switch -c external-change", cwd: otherRepository } };
   try {
     expect(repositoryMutationHandoff(gitEvent, repository)).toMatchObject({
       decision: "ask",

@@ -50,4 +50,8 @@ export type { BoundaryGuardOptions } from "./extension/create-guard.ts";
 import { loadReviewedPolicy } from "./boundary/policy.ts";
 import { createRepositoryBoundaryGuard } from "./extension/create-guard.ts";
 
-export default createRepositoryBoundaryGuard({ policy: loadReviewedPolicy() });
+const reviewedBoundaryPolicy = loadReviewedPolicy();
+
+export const repositoryBoundaryGuard = createRepositoryBoundaryGuard({ policy: reviewedBoundaryPolicy });
+
+export default repositoryBoundaryGuard;

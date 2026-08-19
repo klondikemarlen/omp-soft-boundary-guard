@@ -16,9 +16,12 @@ const WRITE_OPERATIONS: Record<string, Operation> = {
 };
 
 function repositoryReference(value: unknown): string | undefined {
-  if (typeof value !== "string") return normalizeRepository(value);
+  const normalized = normalizeRepository(value);
+  if (normalized || typeof value !== "string") return normalized;
+
   const match = value.match(/github\.com[/:]([^/\s]+)\/([^/\s]+)/i);
-  return normalizeRepository(value) ?? (match ? normalizeRepository(`${match[1]}/${match[2]}`) : undefined);
+  if (!match) return undefined;
+  return normalizeRepository(`${match[1]}/${match[2]}`);
 }
 
 export function githubDeviceWrite(input: ToolInput): GitHubWrite | undefined {
@@ -30,13 +33,19 @@ export function githubDeviceWrite(input: ToolInput): GitHubWrite | undefined {
 
     const operation = WRITE_OPERATIONS[request.op];
     if (!operation) return undefined;
-    const target = repositoryReference(request.repo) ?? repositoryReference(request.pr);
+    const repositoryTarget = repositoryReference(request.repo);
+    const pullRequestTarget = repositoryReference(request.pr);
+    const target = repositoryTarget ?? pullRequestTarget;
     const hasTarget = request.repo !== undefined || request.pr !== undefined;
+    const targetIsRequired = operation.requiresTarget === true;
+    const targetUnresolved = (hasTarget || targetIsRequired) && !target;
+    const title = typeof request.title === "string" ? request.title : undefined;
+    const description = operation.title && title !== undefined ? `${operation.title}: ${title}` : undefined;
     return {
       action: operation.action,
       target,
-      targetUnresolved: (hasTarget && !target) || (operation.requiresTarget && !target),
-      description: operation.title && typeof request.title === "string" ? `${operation.title}: ${request.title}` : undefined,
+      targetUnresolved,
+      description,
     };
   } catch {
     return undefined;

@@ -138,6 +138,51 @@ test("allows external local writes in advisory mode", async () => {
   }
 });
 
+test("guards cross-repository Git mutations separately from remote issue approval", async () => {
+  const repository = checkout();
+  const otherRepository = checkoutOutsideTemporaryDirectory(`https://github.com/${external}.git`);
+  const issueEvent = {
+    toolName: "write",
+    input: { path: "xd://github", content: JSON.stringify({ op: "issue_create", repo: external, title: "External report" }) },
+  };
+  const gitEvent = { toolName: "bash", input: { command: "git -C . switch -c external-change", cwd: otherRepository } };
+  try {
+    expect(repositoryMutationHandoff(gitEvent, repository)).toMatchObject({
+      decision: "ask",
+      action: "git mutation",
+      target: otherRepository,
+    });
+
+    const instance = guard();
+    expect(await instance.handler(issueEvent, context(repository))).toMatchObject({ block: true });
+    approve(instance, "GitHub issue creation", external, "\nIssue title: External report");
+    expect(await instance.handler(issueEvent, context(repository))).toBeUndefined();
+
+    expect(await instance.handler(gitEvent, context(repository))).toMatchObject({ block: true });
+    approve(instance, "git mutation", otherRepository);
+    expect(await instance.handler(gitEvent, context(repository))).toBeUndefined();
+    expect(await instance.handler(
+      { toolName: "bash", input: { command: "git status --short", cwd: otherRepository } },
+      context(repository),
+    )).toBeUndefined();
+    expect(await instance.handler(
+      { toolName: "bash", input: { command: "git branch --show-current", cwd: otherRepository } },
+      context(repository),
+    )).toBeUndefined();
+    expect(await instance.handler(
+      { toolName: "bash", input: { command: "git switch -c same-checkout" } },
+      context(repository),
+    )).toBeUndefined();
+    expect(await instance.handler(
+      { toolName: "bash", input: { command: 'git -C "$TARGET" switch -c unresolved' } },
+      context(repository),
+    )).toBeUndefined();
+  } finally {
+    rmSync(otherRepository, { recursive: true, force: true });
+    rmSync(repository, { recursive: true, force: true });
+  }
+});
+
 test("passes temporary body files without a boundary prompt", async () => {
   const repository = checkout();
   const command = "gh issue create --body-file /tmp/omp-soft-boundary-guard-issue.md";

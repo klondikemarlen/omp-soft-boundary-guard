@@ -14,6 +14,13 @@ test("passes read-only GraphQL queries through", () => {
   expect(graphqlWrite(`{ viewer { login } }`)).toBeUndefined();
 });
 
+test("keeps GraphQL strings and comments from becoming operations", () => {
+  expect(graphqlWrite(`query {
+    node(id: """mutation""") { id }
+    # subscription
+  }`)).toBeUndefined();
+});
+
 test("keeps non-review GraphQL mutations unresolved", () => {
   expect(graphqlWrite(`mutation { deleteIssue(input: { issueId: "issue" }) { clientMutationId } }`)).toMatchObject({
     action: "GitHub API write",
@@ -118,4 +125,24 @@ test("preserves an explicit repository for relative API endpoints", () => {
       { command: "gh api --repo elsewhere/example issues --method POST -f body='see /repos/evil/repo'" },
     ),
   ).toMatchObject({ action: "GitHub API write", target: "elsewhere/example" });
+});
+
+test("guards inline methods and field values", () => {
+  expect(
+    githubApiWrite(
+      ["gh", "api", "repos/elsewhere/example/issues", "-XPOST", "--field=title=Issue"],
+      2,
+      { command: "gh api repos/elsewhere/example/issues -XPOST --field=title=Issue" },
+    ),
+  ).toMatchObject({ action: "GitHub API write", target: "elsewhere/example" });
+});
+
+test("keeps inline GET requests with fields read-only", () => {
+  expect(
+    githubApiWrite(
+      ["gh", "api", "repos/elsewhere/example/issues", "--method=GET", "--field=state=open"],
+      2,
+      { command: "gh api repos/elsewhere/example/issues --method=GET --field=state=open" },
+    ),
+  ).toBeUndefined();
 });

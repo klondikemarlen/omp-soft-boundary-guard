@@ -65,6 +65,32 @@ function githubApiHostnameUnresolved(words: (string | undefined)[], input: ToolI
 
 type GraphqlToken = { type: "name" | "string" | "punct"; value: string };
 
+function appendGraphqlStringToken(document: string, index: number, tokens: GraphqlToken[]): number | undefined {
+  if (document.startsWith('"""', index)) {
+    const end = document.indexOf('"""', index + 3);
+    if (end === -1) return undefined;
+    tokens.push({ type: "string", value: document.slice(index + 3, end) });
+    return end + 3;
+  }
+
+  let end = index + 1;
+  while (end < document.length) {
+    if (document[end] === "\\") {
+      end += 2;
+      continue;
+    }
+    if (document[end] === '"') break;
+    end += 1;
+  }
+  if (end >= document.length) return undefined;
+  try {
+    tokens.push({ type: "string", value: JSON.parse(document.slice(index, end + 1)) });
+  } catch {
+    return undefined;
+  }
+  return end + 1;
+}
+
 function graphqlTokens(document: string): GraphqlToken[] | undefined {
   const tokens: GraphqlToken[] = [];
   for (let index = 0; index < document.length;) {
@@ -78,30 +104,10 @@ function graphqlTokens(document: string): GraphqlToken[] | undefined {
       if (index === -1) break;
       continue;
     }
-    if (document.startsWith('"""', index)) {
-      const end = document.indexOf('"""', index + 3);
-      if (end === -1) return undefined;
-      tokens.push({ type: "string", value: document.slice(index + 3, end) });
-      index = end + 3;
-      continue;
-    }
-    if (character === '"') {
-      let end = index + 1;
-      while (end < document.length) {
-        if (document[end] === "\\") {
-          end += 2;
-          continue;
-        }
-        if (document[end] === '"') break;
-        end += 1;
-      }
-      if (end >= document.length) return undefined;
-      try {
-        tokens.push({ type: "string", value: JSON.parse(document.slice(index, end + 1)) });
-      } catch {
-        return undefined;
-      }
-      index = end + 1;
+    if (document.startsWith('"""', index) || character === '"') {
+      const nextIndex = appendGraphqlStringToken(document, index, tokens);
+      if (nextIndex === undefined) return undefined;
+      index = nextIndex;
       continue;
     }
     if (document.startsWith("...", index)) {
@@ -131,6 +137,7 @@ function graphqlTokens(document: string): GraphqlToken[] | undefined {
   }
   return tokens;
 }
+
 function graphqlOperation(document: string): "query" | "mutation" | undefined {
   const tokens = graphqlTokens(document);
   if (!tokens) return undefined;
@@ -150,6 +157,47 @@ function graphqlOperation(document: string): "query" | "mutation" | undefined {
   return count === 1 && operation !== "subscription" ? operation : undefined;
 }
 
+type ApiValueOption = "field-argument" | "field-inline" | "argument" | "inline";
+
+function apiMethodValue(words: (string | undefined)[], index: number): string | null | undefined {
+  const word = words[index];
+  if (word === "--method" || word === "-X") {
+    const value = words[index + 1];
+    return typeof value === "string" && !value.startsWith("-") ? value.toUpperCase() : null;
+  }
+  if (typeof word !== "string") return undefined;
+  if (!word.startsWith("--method=") && !word.startsWith("-X")) return undefined;
+
+  const value = word.startsWith("--method=") ? word.slice(word.indexOf("=") + 1) : word.slice(2);
+  return value ? value.toUpperCase() : null;
+}
+
+function apiValueOption(word: string | undefined): ApiValueOption | undefined {
+  if (word === "--raw-field" || word === "-f" || word === "--field" || word === "-F" || word === "--input") {
+    return "field-argument";
+  }
+  if (word === "--hostname" || word === "--jq" || word === "--template" || word === "--header" || word === "-H") {
+    return "argument";
+  }
+  if (typeof word !== "string") return undefined;
+  if (
+    word.startsWith("--raw-field=") ||
+    word.startsWith("--field=") ||
+    word.startsWith("--input=") ||
+    word.startsWith("-f") ||
+    word.startsWith("-F")
+  ) return "field-inline";
+  if (/^(?:--hostname|--jq|--template|--header|-H)=/.test(word)) return "inline";
+  return undefined;
+}
+
+function apiEndpointTarget(word: string | undefined): string | null | undefined {
+  if (typeof word !== "string") return undefined;
+  const path = word.match(/(?:^|\/)repos\/([^/\s]+)\/([^/?\s]+)/i);
+  if (!path) return undefined;
+  return normalizeRepository(`${path[1]}/${path[2]}`) ?? null;
+}
+
 export function githubApiWrite(words: (string | undefined)[], index: number, input: ToolInput): GitHubWrite | undefined {
   if (isHelpRequest(words, index)) return undefined;
   if (words[index] === "graphql") {
@@ -165,44 +213,37 @@ export function githubApiWrite(words: (string | undefined)[], index: number, inp
   let methodUnresolved = false;
   let methodExplicit = false;
   let hasFields = false;
-
   let skipNext = false;
+
   for (; index < words.length; index += 1) {
     const word = words[index];
     if (skipNext) {
       skipNext = false;
       continue;
     }
-    if (word === "--method" || word === "-X") {
-      const value = words[index + 1];
+
+    const parsedMethod = apiMethodValue(words, index);
+    if (parsedMethod !== undefined) {
       methodExplicit = true;
-      if (typeof value === "string" && !value.startsWith("-")) method = value.toUpperCase();
-      else methodUnresolved = true;
-      index += 1;
+      if (parsedMethod === null) methodUnresolved = true;
+      else method = parsedMethod;
+      if (word === "--method" || word === "-X") index += 1;
       continue;
     }
-    if (typeof word === "string" && (word.startsWith("--method=") || word.startsWith("-X"))) {
-      methodExplicit = true;
-      const methodValue = word.startsWith("--method=") ? word.slice(word.indexOf("=") + 1) : word.slice(2);
-      if (methodValue) method = methodValue.toUpperCase();
-      else methodUnresolved = true;
+
+    const valueOption = apiValueOption(word);
+    if (valueOption !== undefined) {
+      hasFields ||= valueOption === "field-argument" || valueOption === "field-inline";
+      skipNext = valueOption === "field-argument" || valueOption === "argument";
       continue;
     }
-    const fieldFlag = word === "--raw-field" || word === "-f" || word === "--field" || word === "-F" || word === "--input" ||
-      (typeof word === "string" && (word.startsWith("--raw-field=") || word.startsWith("--field=") || word.startsWith("--input=") || word.startsWith("-f") || word.startsWith("-F")));
-    const valueFlag = fieldFlag || word === "--hostname" || word === "--jq" || word === "--template" || word === "--header" || word === "-H" ||
-      (typeof word === "string" && /^(?:--hostname|--jq|--template|--header|-H)=/.test(word));
-    if (valueFlag) {
-      hasFields ||= fieldFlag;
-      skipNext = word === "--raw-field" || word === "-f" || word === "--field" || word === "-F" || word === "--input" ||
-        word === "--hostname" || word === "--jq" || word === "--template" || word === "--header" || word === "-H";
-      continue;
-    }
-    const path = typeof word === "string" ? word.match(/(?:^|\/)repos\/([^/\s]+)\/([^/?\s]+)/i) : undefined;
-    if (path) target = normalizeRepository(`${path[1]}/${path[2]}`);
+
+    const endpointTarget = apiEndpointTarget(word);
+    if (endpointTarget !== undefined) target = endpointTarget ?? undefined;
   }
 
-  if (!methodUnresolved && method === "GET" && (!hasFields || methodExplicit)) return undefined;
+  const requestIsReadOnly = !methodUnresolved && method === "GET" && (!hasFields || methodExplicit);
+  if (requestIsReadOnly) return undefined;
   return {
     action: "GitHub API write",
     target,

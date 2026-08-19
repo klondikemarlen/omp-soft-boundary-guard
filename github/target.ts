@@ -114,7 +114,10 @@ export function githubTarget(words: (string | undefined)[], index: number, title
       skipNext = true;
       continue;
     }
-    if (!explicitTarget) target ||= repositoryValue(word) && normalizeRepository(repositoryValue(word));
+    if (!explicitTarget && !target) {
+      const repository = repositoryValue(word);
+      if (repository) target = normalizeRepository(repository);
+    }
   }
   if (bodyDescription) description = [description, bodyDescription].filter((detail): detail is string => Boolean(detail)).join("\n");
   return { target, targetUnresolved, description };

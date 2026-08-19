@@ -45,12 +45,6 @@ export OMP_SOFT_BOUNDARY_POLICY='{"name":"Customer repository work","positive":"
 export OMP_SOFT_BOUNDARY_POLICY_REVIEWED="$(bun -e 'const { compileBoundaryPolicy } = await import("./index.ts"); console.log(compileBoundaryPolicy(JSON.parse(process.env.OMP_SOFT_BOUNDARY_POLICY)).sourceFingerprint)')"
 ```
 
-`bun run reinstall` removes the historical `omp-repository-boundary-guard` when present before installing this package, preventing competing confirmation flows. For a direct installation, remove it first:
-
-```bash
-omp plugin uninstall omp-repository-boundary-guard
-omp plugin install github:klondikemarlen/omp-soft-boundary-guard
-```
 
 For development:
 

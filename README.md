@@ -5,7 +5,7 @@ Opt-in OMP extension that logs a soft, best-guess warning when a recognized muta
 ## What it guards
 
 - Local `write` and structured `edit` operations, including both endpoints of an `edit` move.
-- `git push`, including default, configured, named, SSH, and HTTPS remotes.
+- Mutating Git commands that resolve to a local checkout, including `git push`.
 - `gh issue` creation and updates, `gh pr` creation and updates, and mutating `gh api` requests.
 - Supported `xd://github` issue and pull-request writes.
 

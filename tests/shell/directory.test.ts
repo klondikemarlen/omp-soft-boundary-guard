@@ -7,6 +7,11 @@ test("tracks a supported later cd before a GitHub command", () => {
     .toBe("/var");
 });
 
+test("tracks an environment-prefixed directory change", () => {
+  expect(toolDirectory({ command: "GH_HOST=github.com cd /tmp/../var && gh issue create" }, "/workspace"))
+    .toBe("/var");
+});
+
 test("accepts quoted directories with spaces", () => {
   expect(toolDirectory({ command: "cd '/tmp/external checkout' && gh issue create" }, "/workspace"))
     .toBe("/tmp/external checkout");

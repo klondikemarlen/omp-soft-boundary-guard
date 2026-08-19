@@ -7,6 +7,7 @@ import type { ToolCallEvent } from "../extension/contract.ts";
 import { currentCheckoutBoundary } from "../git/current-checkout.ts";
 import { shellCommandSegments } from "../shell/commands.ts";
 import { toolDirectory } from "../shell/directory.ts";
+import { executableIndex } from "../shell/executable-index.ts";
 
 function pathExists(path: string): boolean {
   try {
@@ -103,9 +104,6 @@ function localTarget(path: string): string | undefined {
   }
 }
 
-
-
-
 function containingBoundary(path: string): string | undefined {
   let directory = dirname(path);
   while (!pathExists(directory)) {
@@ -184,26 +182,26 @@ const GIT_BRANCH_AND_TAG_INSPECTION_OPTIONS: Record<string, true> = {
   "--show-current": true,
 };
 
-function shellCommandIndex(words: (string | undefined)[]): number | undefined {
-  let index = 0;
-  while (typeof words[index] === "string" && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[index]!)) index += 1;
-  return typeof words[index] === "string" ? index : undefined;
-}
+type GitInvocation = {
+  command: string;
+  cwd: string;
+  arguments: (string | undefined)[];
+};
 
-function branchOrTagMutates(arguments_: (string | undefined)[]): boolean {
-  for (const argument of arguments_) {
+function branchOrTagMutates(commandArguments: (string | undefined)[]): boolean {
+  for (const argument of commandArguments) {
     if (typeof argument !== "string") return false;
     if (!GIT_BRANCH_AND_TAG_INSPECTION_OPTIONS[argument]) return true;
   }
   return false;
 }
 
-function gitInvocation(words: (string | undefined)[], cwd: string): { command: string; cwd: string; arguments_: (string | undefined)[] } | undefined {
-  const executableIndex = shellCommandIndex(words);
-  if (executableIndex === undefined || words[executableIndex] !== "git") return undefined;
+function gitInvocation(words: (string | undefined)[], cwd: string): GitInvocation | undefined {
+  const commandIndex = executableIndex(words);
+  if (words[commandIndex] !== "git") return undefined;
 
   let directory = cwd;
-  for (let index = executableIndex + 1; index < words.length; index += 1) {
+  for (let index = commandIndex + 1; index < words.length; index += 1) {
     const word = words[index];
     if (typeof word !== "string") return undefined;
     if (word === "-C") {
@@ -221,9 +219,15 @@ function gitInvocation(words: (string | undefined)[], cwd: string): { command: s
       continue;
     }
     if (word.startsWith("-")) return undefined;
-    return { command: word, cwd: directory, arguments_: words.slice(index + 1) };
+    return { command: word, cwd: directory, arguments: words.slice(index + 1) };
   }
   return undefined;
+}
+
+function isMutatingGitInvocation(invocation: GitInvocation): boolean {
+  if (invocation.command === "checkout" || GIT_MUTATION_COMMANDS[invocation.command] === true) return true;
+  return (invocation.command === "branch" || invocation.command === "tag") &&
+    branchOrTagMutates(invocation.arguments);
 }
 
 function gitLocalMutation(event: ToolCallEvent, sessionCwd: string): LocalMutation | undefined {
@@ -236,20 +240,19 @@ function gitLocalMutation(event: ToolCallEvent, sessionCwd: string): LocalMutati
   let cwd = resolvedCwd ?? sessionCwd;
 
   for (const segment of shellCommandSegments(event.input.command)) {
-    const executableIndex = shellCommandIndex(segment.words);
-    if (executableIndex === undefined) return undefined;
-    const executable = segment.words[executableIndex];
+    const commandIndex = executableIndex(segment.words);
+    const executable = segment.words[commandIndex];
     if (executable === "cd") {
-      const target = segment.words[executableIndex + 1] === "--"
-        ? segment.words[executableIndex + 2]
-        : segment.words[executableIndex + 1];
+      const target = segment.words[commandIndex + 1] === "--"
+        ? segment.words[commandIndex + 2]
+        : segment.words[commandIndex + 1];
       if (typeof target !== "string") return undefined;
       const resolved = canonicalTarget(target, cwd);
       if (!resolved) return undefined;
       cwd = resolved;
     } else {
       const invocation = gitInvocation(segment.words, cwd);
-      if (invocation && (invocation.command === "checkout" || GIT_MUTATION_COMMANDS[invocation.command] || ((invocation.command === "branch" || invocation.command === "tag") && branchOrTagMutates(invocation.arguments_)))) {
+      if (invocation && isMutatingGitInvocation(invocation)) {
         const targetBoundary = currentCheckoutBoundary(invocation.cwd);
         if (!targetBoundary) return undefined;
         if (targetBoundary !== boundary) return { action: "git mutation", boundary, targets: [invocation.cwd] };

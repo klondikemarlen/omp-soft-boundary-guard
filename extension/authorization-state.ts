@@ -132,10 +132,19 @@ export class AuthorizationState {
     handoff?: AuthorizationHandoff,
     questionId = confirmationQuestionId,
   ): boolean {
-    if (this.#pending) return false;
+    if (this.#pending) {
+      return false;
+    }
+
     this.#rejectedKey = undefined;
     this.#mismatchedKey = undefined;
     this.#pending = { key, question, questionId, identity, handoff };
     return true;
+  }
+
+  cancelPending(key: string): void {
+    if (this.#pending?.key === key) {
+      this.#pending = undefined;
+    }
   }
 }

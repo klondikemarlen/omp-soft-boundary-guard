@@ -1,7 +1,7 @@
 {
   "name": "omp-soft-boundary-guard",
-  "version": "2.0.9",
-  "description": "Opt-in OMP soft boundary guard with deterministic adapters and advisory confirmation for uncertain writes.",
+  "version": "2.1.0",
+  "description": "OMP soft boundary guard with one-shot approval for recognized external GitHub writes and advisory warnings for other mutations.",
   "type": "module",
   "scripts": {
     "test": "bun test",
@@ -18,6 +18,8 @@
     "extensions": ["./index.ts"]
   },
   "dependencies": {
+    "@lezer/common": "^1.5.3",
+    "@lezer/python": "^1.1.19",
     "shell-quote": "^1.10.0"
   },
   "devDependencies": {

@@ -6,6 +6,7 @@ import { defaultPushRemote } from "../git/default-push-remote.ts";
 import { pushRepository } from "../git/push-repository.ts";
 import { gitPushWrite } from "../git/push-write.ts";
 import { pinGitHubDeviceRepository } from "../github/device-write.ts";
+import { pythonGitHubCliWrites } from "../github/python-cli-write.ts";
 import { remoteRepository } from "../github/remote-repository.ts";
 import { recognizedGitHubWrite } from "../github/recognized-write.ts";
 import type { GitHubWrite } from "../github/write.ts";
@@ -16,7 +17,18 @@ import { guardDecision } from "./decision.ts";
 
 function writeFor(event: ToolCallEvent): GitHubWrite | undefined {
   if (event.toolName === "write") return recognizedGitHubWrite(event.input);
-  if (event.toolName !== "bash" || typeof event.input.command !== "string") return undefined;
+  if (event.toolName === "eval") {
+    const code = event.input.code;
+    if (event.input.language !== "py" || typeof code !== "string") {
+      return undefined;
+    }
+
+    return pythonGitHubCliWrites(event.input, code);
+  }
+
+  if (event.toolName !== "bash" || typeof event.input.command !== "string") {
+    return undefined;
+  }
 
   const writes = shellCommands(event.input.command)
     .map((words) => gitPushWrite(words) ?? recognizedGitHubWrite(event.input, words))

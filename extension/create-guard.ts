@@ -11,7 +11,7 @@ import type { BoundaryCategory } from "../guard/confirmation-question.ts";
 import { repositoryMutationHandoff } from "../guard/handoff.ts";
 
 export type BoundaryGuardOptions = {
-  enforce?: boolean;
+  enforce?: boolean | "github";
   policy?: ActiveBoundaryPolicy;
   classifier?: BoundaryClassifier;
   recorder?: AdvisoryRecorder;
@@ -19,6 +19,14 @@ export type BoundaryGuardOptions = {
 
 type AllowedHandoff = Extract<RepositoryMutationHandoff, { decision: "allow" }>;
 type AskHandoff = Extract<RepositoryMutationHandoff, { decision: "ask" }>;
+
+function shouldEnforce(
+  enforce: BoundaryGuardOptions["enforce"],
+  handoff: RepositoryMutationHandoff,
+): boolean {
+  return handoff.decision === "ask" &&
+    (enforce === true || (enforce === "github" && handoff.category === "github"));
+}
 
 function policyCategory(action: string): BoundaryCategory {
   if (action === "release/deploy") return "release";
@@ -166,10 +174,16 @@ function requestConfirmation(
     return { block: true, reason: `${reason}${authorizationDetail} A confirmation is already pending.` };
   }
 
-  pi.sendUserMessage(
-    `Call the ask tool now with this exact payload: ${JSON.stringify(handoff.ask)}. If approved, retry exactly the blocked ${handoff.action}; otherwise stop.`,
-    { deliverAs: "followUp" },
-  );
+  try {
+    pi.sendUserMessage(
+      `Call the ask tool now with this exact payload: ${JSON.stringify(handoff.ask)}. If approved, retry exactly the blocked ${handoff.action}; otherwise stop.`,
+      { deliverAs: "steer" },
+    );
+  } catch (error) {
+    authorization.cancelPending(handoff.fingerprint);
+    throw error;
+  }
+
   return { block: true, reason: `${reason}${authorizationDetail} OMP ask confirmation requested.` };
 }
 
@@ -179,19 +193,18 @@ export function createRepositoryBoundaryGuard(options: BoundaryGuardOptions = {}
     pi.on("tool_result", (event) => authorization.record(event));
 
     pi.on("tool_call", async (event, context): Promise<ToolCallResult> => {
-      const configuredPolicy = context.boundaryPolicy ?? options.policy;
-      const activePolicy = isActiveBoundaryPolicy(configuredPolicy) ? configuredPolicy : undefined;
-      const classifier = classifierFor(activePolicy, options, context, context.boundaryClassifier);
-
       let revisedInput: ToolInput | undefined;
       try {
+        const configuredPolicy = context.boundaryPolicy ?? options.policy;
+        const activePolicy = isActiveBoundaryPolicy(configuredPolicy) ? configuredPolicy : undefined;
+        const classifier = classifierFor(activePolicy, options, context, context.boundaryClassifier);
         const resolvedHandoff = repositoryMutationHandoff(event, context.cwd);
         revisedInput = resolvedHandoff.input;
         let handoff = resolvedHandoff;
         let reusedHandoff = false;
         let scope: string | undefined;
-        if (options.enforce && resolvedHandoff.decision === "ask") {
-          scope ??= sessionScope(resolvedHandoff, context.cwd);
+        if (resolvedHandoff.decision === "ask" && shouldEnforce(options.enforce, resolvedHandoff)) {
+          scope = sessionScope(resolvedHandoff, context.cwd);
           const identity = authorizationIdentity(authorization, event, context.cwd, scope);
           const cachedHandoff = reusableHandoff(authorization, identity, resolvedHandoff);
           if (cachedHandoff) {
@@ -216,15 +229,20 @@ export function createRepositoryBoundaryGuard(options: BoundaryGuardOptions = {}
           };
           const needsWarning = classification !== undefined &&
             (classification.classification === "outside" || classification.risk !== "low");
-          const outcome = needsWarning && context.hasUI && options.enforce ? "asked" : "allowed";
+          const enforcePolicy = options.enforce === true;
+          const outcome = needsWarning && context.hasUI && enforcePolicy ? "asked" : "allowed";
           recordClassification(options.recorder, handoff, result, outcome);
 
-          if (needsWarning && options.enforce) handoff = policyAskHandoff(handoff, event, context.cwd);
-          if (needsWarning && !options.enforce) console.warn(warningFor(handoff));
+          if (needsWarning && enforcePolicy) {
+            handoff = policyAskHandoff(handoff, event, context.cwd);
+          }
+          if (needsWarning && !enforcePolicy) {
+            console.warn(warningFor(handoff));
+          }
         }
 
         if (handoff.decision === "allow") return inputResult(revisedInput);
-        if (!options.enforce) {
+        if (!shouldEnforce(options.enforce, handoff)) {
           console.warn(warningFor(handoff));
           return inputResult(revisedInput);
         }
@@ -232,12 +250,8 @@ export function createRepositoryBoundaryGuard(options: BoundaryGuardOptions = {}
         const identity = authorizationIdentity(authorization, event, context.cwd, scope);
         return requestConfirmation(authorization, pi, handoff, event, context.hasUI, identity, revisedInput);
       } catch {
-        if (configuredPolicy) {
-          recordGuardFailure(options.recorder, event);
-          return inputResult(revisedInput);
-        }
-        if (!options.enforce) return inputResult(revisedInput);
-        return { block: true, reason: "Boundary guard failed before confirmation could be completed." };
+        recordGuardFailure(options.recorder, event);
+        return inputResult(revisedInput);
       }
     });
   };

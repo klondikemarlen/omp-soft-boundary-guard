@@ -1,6 +1,6 @@
 # OMP Soft Boundary Guard
 
-Opt-in OMP extension that logs a soft, best-guess warning when a recognized mutation may cross the current built-in boundary; the installed extension never blocks the operation.
+Opt-in OMP extension that requires one-shot approval for recognized external GitHub writes and logs soft, best-guess warnings for other mutations outside the current built-in boundary.
 
 ## What it guards
 
@@ -8,13 +8,18 @@ Opt-in OMP extension that logs a soft, best-guess warning when a recognized muta
 - Mutating Git commands that resolve to a local checkout, including `git push`.
 - `gh issue` creation and updates, `gh pr` creation and updates, and mutating `gh api` requests.
 - Supported `xd://github` issue and pull-request writes.
+- Python `eval` calls containing direct `subprocess.run([...])` GitHub CLI invocations with literal argv.
 
-The installed extension logs a warning when it can resolve a supported mutation and identify a target outside the active boundary, then lets the operation proceed. Same-boundary mutations remain silent. Read-only operations, unknown or malformed operations, dynamic or ambiguous commands, unresolved paths, unresolved repositories, and missing checkout information pass through silently. The underlying tool remains responsible for validating anything the guard cannot classify confidently.
+When the active checkout and target resolve to different GitHub repositories, the installed extension blocks recognized GitHub writes before execution and requests the standard OMP Ask. The question shows the destination and command or Python code. Rejecting keeps that invocation blocked; approving permits one exact retry. Other recognized external mutations log a warning and proceed. Same-boundary mutations remain silent unless a reviewed policy produces an advisory warning.
+
+Read-only operations, unknown or malformed operations, dynamic or ambiguous commands, unresolved paths, unresolved repositories, missing checkout information, unavailable UI, and guard errors fail open. This is approval protection for supported operations, not a hard execution sandbox. The underlying tool remains responsible for validating anything the guard cannot classify confidently.
 Static GraphQL queries and every GraphQL mutation pass through without a warning when their target cannot be resolved.
 
-The current built-in boundary is the invoking session's normalized GitHub `origin`, or its canonical Git root when no GitHub origin exists. Tool `cwd`, shell `cd … &&`, and Git `-C` help resolve a target, but never redefine the boundary. Programmatic callers can opt into strict, one-shot OMP Ask enforcement with `createRepositoryBoundaryGuard({ enforce: true })`; the installed extension remains advisory.
+The current built-in boundary is the invoking session's normalized GitHub `origin`, or its canonical Git root when no GitHub origin exists. Tool `cwd`, shell `cd … &&`, and Git `-C` help resolve a target, but never redefine the boundary. The installed extension uses `createRepositoryBoundaryGuard({ enforce: "github" })`. Programmatic callers can use `{ enforce: true }` for all recognized external mutation categories, or `{ enforce: false }` (also the factory default) for warnings only. Advisory-only mode does not provide approval protection.
 
-For recognized `xd://github` mutations that omit `repo`, the guard pins the tool's execution input to that normalized `origin`. This prevents another resolver from silently selecting a distinct configured remote such as `upstream`; explicit external repositories still follow the normal warning or strict Ask path.
+For recognized `xd://github` mutations that omit `repo`, the guard pins the tool's execution input to that normalized `origin`. This prevents another resolver from silently selecting a distinct configured remote such as `upstream`; explicit external repositories follow the installed approval path.
+
+Python recognition parses syntax without executing the supplied code or requiring a Python interpreter. It supports direct `subprocess.run` calls with a literal list of plain, unescaped string arguments, optional `input` supplied as a variable, and boolean `check`, `capture_output`, and `text` keywords. Aliases, dynamic argv, unsupported subprocess options, malformed code, and multiple recognized writes remain unresolved and fail open. Calls hidden inside Python strings or comments are not treated as executable writes.
 
 ## Handoff inspection
 
@@ -32,7 +37,9 @@ omp plugin install github:klondikemarlen/omp-soft-boundary-guard
 
 After installing or reinstalling, start a new OMP process before retesting. Reloading extensions does not replace a module already loaded by the process.
 
-Strict-mode approvals are held only in process memory; a plugin reload clears them, and a new OMP process does not carry an earlier approval. The blocked handoff is cached in memory for the pending confirmation and one exact retry. Directories within the same canonical Git root share that approval scope; a different worktree or checkout does not. A changed mutation input or resolved target never uses the cached artifact or approval; an approved exact release remains pending until that invocation starts, another confirmation replaces it, the checkout changes, it is rejected, the plugin reloads, or the process ends. No prompt artifact is written to disk or retained across runs.
+Approvals are held only in process memory; a plugin reload clears them, and a new OMP process does not carry an earlier approval. The blocked handoff is cached in memory for the pending confirmation and one exact retry. Directories within the same canonical Git root share that approval scope; a different worktree or checkout does not. A changed submitted mutation input or resolved target never uses the cached artifact or approval; an approved exact release remains pending until that invocation starts, another confirmation replaces it, the checkout changes, it is rejected, the plugin reloads, or the process ends. No prompt artifact is written to disk or retained across runs.
+
+Exact approval binds the submitted tool input, including Python code, not the contents of mutable Python globals, environment variables, stdin sources, or external files. Review those payload sources before approving; their runtime values are not inspected or snapshotted by the guard.
 
 Release, deploy, publish, and promote commands—including repository wrappers, package scripts, nested shell commands, and GitHub release writes—are soft-boundary checks. A release targeting the current checkout's resolved `klondikemarlen/*` GitHub origin is inside the built-in boundary and remains silently allowed, including under an active reviewed policy. Other resolved targets log a concise soft warning and proceed. Programmatic strict mode reports the full command and requests the exact Ask when UI is available; without UI, the underlying operation proceeds.
 
@@ -44,7 +51,6 @@ From the plugin checkout or its installed package directory (for example `~/.omp
 export OMP_SOFT_BOUNDARY_POLICY='{"name":"Customer repository work","positive":"active checkout, source, tests, docs","negative":"other checkouts, production targets, credentials, secrets"}'
 export OMP_SOFT_BOUNDARY_POLICY_REVIEWED="$(bun -e 'const { compileBoundaryPolicy } = await import("./index.ts"); console.log(compileBoundaryPolicy(JSON.parse(process.env.OMP_SOFT_BOUNDARY_POLICY)).sourceFingerprint)')"
 ```
-
 
 For development:
 

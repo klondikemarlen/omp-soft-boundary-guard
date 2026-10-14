@@ -1,7 +1,13 @@
 import { execFileSync } from "node:child_process";
 import { mkdirSync } from "node:fs";
 
-import { createRepositoryBoundaryGuard, type BoundaryGuardOptions, type ToolCallHandler } from "../../index.ts";
+import {
+  createRepositoryBoundaryGuard,
+  repositoryBoundaryGuard,
+  type BoundaryGuardOptions,
+  type ExtensionAPI,
+  type ToolCallHandler,
+} from "../../index.ts";
 
 export const current = "klondikemarlen/omp-soft-boundary-guard";
 export const external = "elsewhere/example";
@@ -14,12 +20,14 @@ export type Guard = {
   deliveries: Array<"steer" | "followUp">;
 };
 
-export function guard(options?: BoundaryGuardOptions): Guard {
+type GuardInstaller = (pi: ExtensionAPI) => void;
+
+function captureGuard(install: GuardInstaller, sendUserMessage?: ExtensionAPI["sendUserMessage"]): Guard {
   let handler: ToolCallHandler | undefined;
   let resultHandler: Guard["answer"] | undefined;
   const messages: string[] = [];
   const deliveries: Guard["deliveries"] = [];
-  createRepositoryBoundaryGuard({ enforce: true, ...options })({
+  install({
     on: ((event: string, registered: ToolCallHandler | Guard["answer"]) => {
       if (event === "tool_call") handler = registered as ToolCallHandler;
       else resultHandler = registered as Guard["answer"];
@@ -27,6 +35,7 @@ export function guard(options?: BoundaryGuardOptions): Guard {
     sendUserMessage: (message, options) => {
       messages.push(message);
       deliveries.push(options.deliverAs);
+      sendUserMessage?.(message, options);
     },
   });
   return {
@@ -35,6 +44,14 @@ export function guard(options?: BoundaryGuardOptions): Guard {
     messages,
     deliveries,
   };
+}
+
+export function guard(options?: BoundaryGuardOptions): Guard {
+  return captureGuard(createRepositoryBoundaryGuard({ enforce: true, ...options }));
+}
+
+export function installedGuard(sendUserMessage?: ExtensionAPI["sendUserMessage"]): Guard {
+  return captureGuard(repositoryBoundaryGuard, sendUserMessage);
 }
 
 export function checkout(remote: string | null = `https://github.com/${current}.git`, root = "/tmp") {

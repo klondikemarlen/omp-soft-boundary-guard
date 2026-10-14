@@ -116,3 +116,18 @@ test("keeps a pending confirmation after an unrelated ask", () => {
 
   expect(state.begin("next", question)).toBe(false);
 });
+
+test("cancels only the matching pending confirmation", () => {
+  const state = new AuthorizationState();
+  state.resetFor("/checkout");
+  expect(state.begin("approved", question)).toBe(true);
+  state.record(approval(["Approve"]));
+  expect(state.begin("pending", question)).toBe(true);
+
+  state.cancelPending("other");
+  expect(state.begin("another", question)).toBe(false);
+  state.cancelPending("pending");
+
+  expect(state.consume("approved")).toBe("authorized");
+  expect(state.begin("next", question)).toBe(true);
+});

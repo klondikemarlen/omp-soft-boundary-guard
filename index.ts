@@ -52,6 +52,9 @@ import { createRepositoryBoundaryGuard } from "./extension/create-guard.ts";
 
 const reviewedBoundaryPolicy = loadReviewedPolicy();
 
-export const repositoryBoundaryGuard = createRepositoryBoundaryGuard({ policy: reviewedBoundaryPolicy });
+export const repositoryBoundaryGuard = createRepositoryBoundaryGuard({
+  policy: reviewedBoundaryPolicy,
+  enforce: "github",
+});
 
 export default repositoryBoundaryGuard;

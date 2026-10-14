@@ -1,5 +1,6 @@
-import { expect, test } from "bun:test";
 import { mkdirSync, rmSync } from "node:fs";
+
+import { expect, test } from "bun:test";
 
 import { approve, checkout, context, external, guard } from "./test-support.ts";
 
@@ -11,20 +12,6 @@ test("does not reissue a pending confirmation", async () => {
     await instance.handler(event, context(repository));
     const result = await instance.handler(event, context(repository));
     expect(result).toMatchObject({ reason: expect.stringContaining("confirmation is already pending") });
-  } finally {
-    rmSync(repository, { recursive: true, force: true });
-  }
-});
-
-test("queues a confirmation after the blocked mutation", async () => {
-  const repository = checkout();
-  try {
-    const instance = guard();
-    await instance.handler(
-      { toolName: "bash", input: { command: `gh issue comment 85 --repo ${external} --body "Queued"` } },
-      context(repository),
-    );
-    expect(instance.deliveries).toEqual(["followUp"]);
   } finally {
     rmSync(repository, { recursive: true, force: true });
   }

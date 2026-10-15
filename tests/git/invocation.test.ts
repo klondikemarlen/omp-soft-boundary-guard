@@ -7,13 +7,17 @@ import { expect, test } from "bun:test";
 
 import { gitInvocation, gitInvocationRoot } from "../../git/invocation.ts";
 
-test("leaves unsupported and dynamic Git global options unresolved", () => {
+test("when Git global options are unsupported or dynamic, leaves the invocation unresolved", () => {
+  // Arrange: use the literal unsupported and dynamic invocations below.
+
+  // Act / Assert
   expect(gitInvocation(["git", "--git-dir=/tmp/other.git", "switch", "-c", "audit-branch"])).toBeUndefined();
   expect(gitInvocation(["git", "-C", undefined, "switch", "-c", "audit-branch"])).toBeUndefined();
   expect(gitInvocation(["git", "-Cother", "switch", "-c", "audit-branch"])).toBeUndefined();
 });
 
-test("resolves Git -C symlink-parent semantics without lexical path normalization", () => {
+test("when -C resolves through a symlink parent, preserves Git path semantics", () => {
+  // Arrange
   const directory = mkdtempSync(join(tmpdir(), "omp-soft-boundary-guard-git-invocation-"));
   const invokingDirectory = join(directory, "invoking");
   const targetRepository = join(directory, "target");
@@ -25,6 +29,7 @@ test("resolves Git -C symlink-parent semantics without lexical path normalizatio
   symlinkSync(targetSubdirectory, join(invokingDirectory, "link"));
 
   try {
+    // Act / Assert
     expect(gitInvocationRoot(invokingDirectory, ["-C", "link/.."]))
       .toBe(targetRepository);
   } finally {

@@ -70,6 +70,8 @@ The package root declares `index.ts` under `omp.extensions` for packaged install
 bun test
 ```
 
+For test changes, also run the installed `marlens-rules:test-alignment` verifier against the issue branch's diff from its PR base (normally `origin/main`). Its shared naming and phase-comment baseline applies without a local README directive. A clean-HEAD check that selects no changed tests does not verify a released diff.
+
 ## Release
 
 Release policy:

@@ -43,18 +43,21 @@ const reviewedPolicy = activateReviewedPolicy(reviewPolicy(createPolicyState({
 }))).active!;
 
 describe("installed default GitHub enforcement", () => {
-  test("asks for an external GitHub API write and permits one exact retry", async () => {
+  test("when an external GitHub API write is requested, permits one exact retry", async () => {
+    // Arrange
     const repository = checkout();
     const command = `gh api --method POST repos/${external}/issues -f title='External issue' -f body='Issue details'`;
     const event = { toolName: "bash", input: { command } };
     try {
       const instance = installedGuard();
+      // Act / Assert
       expect(await instance.handler(event, context(repository))).toMatchObject({ block: true });
       expect(instance.messages).toHaveLength(1);
       expect(askPayload(instance).questions[0].question).toContain(`Target repository: ${external}`);
       expect(askPayload(instance).questions[0].question).toContain(`Command: ${command}`);
 
       approve(instance, "GitHub issue creation", external);
+      // Act / Assert
       expect(await instance.handler(event, context(repository))).toBeUndefined();
       expect(await instance.handler(event, context(repository))).toMatchObject({ block: true });
       expect(instance.messages).toHaveLength(2);
@@ -63,11 +66,13 @@ describe("installed default GitHub enforcement", () => {
     }
   });
 
-  test("requires GitHub approval when a compound command also targets an external release", async () => {
+  test("when a compound command targets an external release, requires GitHub approval", async () => {
+    // Arrange
     const repository = checkout();
     const command = "npm run release -- --repo elsewhere/release && gh issue create --repo elsewhere/example --title audit --body audit";
     try {
       const instance = installedGuard();
+      // Act / Assert
       expect(await instance.handler(
         { toolName: "bash", input: { command } },
         context(repository),
@@ -77,17 +82,20 @@ describe("installed default GitHub enforcement", () => {
     }
   });
 
-  test("requests fresh confirmation for a changed GitHub write payload", async () => {
+  test("when a GitHub write payload changes, requests fresh confirmation", async () => {
+    // Arrange
     const repository = checkout();
     const originalCommand = `gh api --method POST repos/${external}/issues -f title='Original issue' -f body='Original body'`;
     const changedCommand = `gh api --method POST repos/${external}/issues -f title='Original issue' -f body='Changed body'`;
     try {
       const instance = installedGuard();
       const original = { toolName: "bash", input: { command: originalCommand } };
+      // Act / Assert
       expect(await instance.handler(original, context(repository))).toMatchObject({ block: true });
       approve(instance, "GitHub issue creation", external);
 
       const changed = { toolName: "bash", input: { command: changedCommand } };
+      // Act / Assert
       expect(await instance.handler(changed, context(repository))).toMatchObject({
         block: true,
         reason: expect.stringContaining("OMP ask confirmation requested"),
@@ -99,7 +107,8 @@ describe("installed default GitHub enforcement", () => {
     }
   });
 
-  test("requests fresh confirmation for a changed GitHub destination", async () => {
+  test("when a GitHub destination changes, requests fresh confirmation", async () => {
+    // Arrange
     const repository = checkout();
     const originalCommand = `gh api --method POST repos/${external}/issues -f title='Original issue' -f body='Issue details'`;
     const changedTarget = "elsewhere/another-example";
@@ -107,10 +116,14 @@ describe("installed default GitHub enforcement", () => {
     try {
       const instance = installedGuard();
       const original = { toolName: "bash", input: { command: originalCommand } };
+      // Act / Assert
       expect(await instance.handler(original, context(repository))).toMatchObject({ block: true });
+
+      // Act
       approve(instance, "GitHub issue creation", external);
 
       const changed = { toolName: "bash", input: { command: changedCommand } };
+      // Act / Assert
       expect(await instance.handler(changed, context(repository))).toMatchObject({
         block: true,
         reason: expect.stringContaining("OMP ask confirmation requested"),
@@ -123,7 +136,8 @@ describe("installed default GitHub enforcement", () => {
     }
   });
 
-  test("keeps a declined external GitHub write blocked", async () => {
+  test("when an external GitHub write is declined, keeps it blocked", async () => {
+    // Arrange
     const repository = checkout();
     const event = {
       toolName: "bash",
@@ -131,8 +145,10 @@ describe("installed default GitHub enforcement", () => {
     };
     try {
       const instance = installedGuard();
+      // Act / Assert
       expect(await instance.handler(event, context(repository))).toMatchObject({ block: true });
       answer(instance, "Reject");
+      // Act / Assert
       expect(await instance.handler(event, context(repository))).toMatchObject({
         block: true,
         reason: expect.stringContaining("previous confirmation was not approved"),
@@ -143,7 +159,8 @@ describe("installed default GitHub enforcement", () => {
     }
   });
 
-  test("asks before an external xd GitHub publication", async () => {
+  test("when an external xd GitHub publication is requested, asks first", async () => {
+    // Arrange
     const repository = checkout();
     const event = {
       toolName: "write",
@@ -154,25 +171,30 @@ describe("installed default GitHub enforcement", () => {
     };
     try {
       const instance = installedGuard();
+      // Act / Assert
       expect(await instance.handler(event, context(repository))).toMatchObject({ block: true });
       expect(askPayload(instance).questions[0].question).toContain(`Target repository: ${external}`);
       expect(askPayload(instance).questions[0].question).toContain("Issue title: External device issue");
 
       approve(instance, "GitHub issue creation", external, "\nIssue title: External device issue");
+      // Act / Assert
       expect(await instance.handler(event, context(repository))).toBeUndefined();
     } finally {
       rmSync(repository, { recursive: true, force: true });
     }
   });
 
-  test("keeps same-boundary GitHub writes silent", async () => {
+  test("when a GitHub write targets the same boundary, stays silent", async () => {
+    // Arrange
     const repository = checkout();
     try {
       const instance = installedGuard();
+      // Act
       const result = await instance.handler(
         { toolName: "bash", input: { command: `gh issue create --repo ${current} --title 'Internal issue'` } },
         context(repository),
       );
+      // Assert
       expect(result).toBeUndefined();
       expect(instance.messages).toEqual([]);
     } finally {
@@ -180,10 +202,12 @@ describe("installed default GitHub enforcement", () => {
     }
   });
 
-  test("keeps policy-classified same-boundary writes advisory", async () => {
+  test("when policy classifies a same-boundary write as outside, keeps it advisory", async () => {
+    // Arrange: use the reviewed policy fixture with a same-boundary write.
     const repository = checkout();
     try {
       const instance = installedGuard();
+      // Act
       const result = await instance.handler(
         { toolName: "bash", input: { command: `gh issue create --repo ${current} --title 'Internal issue'` } },
         {
@@ -196,6 +220,7 @@ describe("installed default GitHub enforcement", () => {
           }),
         },
       );
+      // Assert
       expect(result).toBeUndefined();
       expect(instance.messages).toEqual([]);
     } finally {
@@ -203,15 +228,18 @@ describe("installed default GitHub enforcement", () => {
     }
   });
 
-  test("leaves non-GitHub boundary writes advisory", async () => {
+  test("when a boundary write is not a GitHub write, keeps it advisory", async () => {
+    // Arrange
     const repository = checkout();
     const otherRepository = checkoutOutsideTemporaryDirectory(null);
     try {
       const instance = installedGuard();
+      // Act
       const result = await instance.handler(
         { toolName: "write", input: { path: `${otherRepository}/outside.ts`, content: "" } },
         context(repository),
       );
+      // Assert
       expect(result).toBeUndefined();
       expect(instance.messages).toEqual([]);
     } finally {
@@ -220,14 +248,17 @@ describe("installed default GitHub enforcement", () => {
     }
   });
 
-  test("fails open for external writes without UI", async () => {
+  test("when UI is unavailable for an external write, fails open", async () => {
+    // Arrange
     const repository = checkout();
     try {
       const instance = installedGuard();
+      // Act
       const result = await instance.handler(
         { toolName: "bash", input: { command: `gh issue create --repo ${external} --title 'No UI issue'` } },
         context(repository, false),
       );
+      // Assert
       expect(result).toBeUndefined();
       expect(instance.messages).toEqual([]);
     } finally {
@@ -235,14 +266,17 @@ describe("installed default GitHub enforcement", () => {
     }
   });
 
-  test("passes malformed GitHub input through without prompting", async () => {
+  test("when GitHub input is malformed, passes it through without prompting", async () => {
+    // Arrange
     const repository = checkout();
     try {
       const instance = installedGuard();
+      // Act
       const result = await instance.handler(
         { toolName: "write", input: { path: "xd://github", content: "{ malformed" } },
         context(repository),
       );
+      // Assert
       expect(result).toBeUndefined();
       expect(instance.messages).toEqual([]);
     } finally {
@@ -250,11 +284,13 @@ describe("installed default GitHub enforcement", () => {
     }
   });
 
-  test("fails open and retries confirmation after delivery throws", async () => {
+  test("when confirmation delivery throws, fails open and retries confirmation", async () => {
+    // Arrange
     const repository = checkout();
     let deliveryUnavailable = true;
     try {
       const instance = installedGuard(() => {
+
         if (deliveryUnavailable) {
           throw new Error("confirmation delivery unavailable");
         }
@@ -263,9 +299,11 @@ describe("installed default GitHub enforcement", () => {
         toolName: "bash",
         input: { command: `gh issue create --repo ${external} --title 'Delivery error issue'` },
       };
+      // Act / Assert
       expect(await instance.handler(event, context(repository))).toBeUndefined();
 
       deliveryUnavailable = false;
+      // Act / Assert
       expect(await instance.handler(event, context(repository))).toMatchObject({ block: true });
       expect(instance.messages).toHaveLength(2);
     } finally {

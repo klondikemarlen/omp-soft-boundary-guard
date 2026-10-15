@@ -47,7 +47,7 @@ export function askHandoff(
     category,
     currentRepository,
     target,
-    fingerprint: authorizationKey(action, target, event.input, context),
+    fingerprint: authorizationKey(event.toolName, action, target, event.input, context),
     ask: {
       questions: [{
         id: questionId,

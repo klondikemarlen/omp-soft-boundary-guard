@@ -1,7 +1,8 @@
 import type { ToolCallEvent, ToolInput } from "../extension/contract.ts";
 import { currentCheckoutRepository, currentCheckoutRoot } from "../git/current-checkout.ts";
+import { shellExecutionSegments } from "../shell/directory.ts";
+import { releaseExecutionSegments, releaseTarget } from "../shell/release-command.ts";
 import { askHandoff, type RepositoryMutationHandoff } from "./ask.ts";
-import { releaseCommand, releaseTarget } from "../shell/release-command.ts";
 
 const INTERNAL_RELEASE_INPUTS = new WeakMap<ToolInput, string>();
 
@@ -18,18 +19,56 @@ function takeInternalRelease(event: ToolCallEvent): boolean {
 }
 
 export function releaseHandoff(event: ToolCallEvent, cwd: string): RepositoryMutationHandoff {
-  if (event.toolName !== "bash" || typeof event.input.command !== "string") return { decision: "allow" };
-  if (takeInternalRelease(event)) return { decision: "allow" };
-  if (!releaseCommand(event.input.command)) return { decision: "allow" };
+  if (event.toolName !== "bash" || typeof event.input.command !== "string") {
+    return { decision: "allow" };
+  }
+
+  if (takeInternalRelease(event)) {
+    return { decision: "allow" };
+  }
+
+  const segments = releaseExecutionSegments(shellExecutionSegments(event.input, cwd));
+  if (!segments.length) {
+    return { decision: "allow" };
+  }
+
+  let executionTarget: string | undefined;
+  let releaseContextResolved = true;
+  for (const segment of segments) {
+    if (!segment.cwd) {
+      releaseContextResolved = false;
+      break;
+    }
+
+    const segmentTarget = currentCheckoutRepository(segment.cwd) ?? currentCheckoutRoot(segment.cwd);
+    if (!segmentTarget || (executionTarget && executionTarget !== segmentTarget)) {
+      releaseContextResolved = false;
+      break;
+    }
+
+    executionTarget = segmentTarget;
+  }
+
   const { repository: explicitTarget, unresolved } = releaseTarget(event.input.command);
+
+  if (explicitTarget === undefined && (!releaseContextResolved || !executionTarget)) {
+    return { decision: "allow" };
+  }
+
   const currentRepository = currentCheckoutRepository(cwd);
+
+  const target = explicitTarget ?? executionTarget;
+  if (!target) {
+    return { decision: "allow" };
+  }
+
   if (
     currentRepository?.startsWith("klondikemarlen/") &&
     !unresolved &&
-    (explicitTarget === undefined || explicitTarget === currentRepository)
+    target === currentRepository
   ) {
     return { decision: "allow", action: "release/deploy", target: currentRepository, currentRepository };
   }
-  const target = explicitTarget ?? currentRepository ?? currentCheckoutRoot(cwd) ?? cwd;
+
   return askHandoff("release/deploy", target, event, target, "release", currentRepository);
 }

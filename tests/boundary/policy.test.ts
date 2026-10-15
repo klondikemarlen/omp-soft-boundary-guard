@@ -9,6 +9,7 @@ import {
   reviewPolicy,
   updatePolicySource,
 } from "../../index.ts";
+
 const source = {
   name: "Customer repository work",
   positive: "active checkout\nsource and tests",
@@ -61,4 +62,32 @@ test("editing source invalidates the active compiled version", () => {
 
 test("rejects unsupported policy behavior instead of compiling a second policy language", () => {
   expect(() => compileBoundaryPolicy({ ...source, behavior: { failure: "block" as never } })).toThrow("unsupported boundary behavior");
+});
+
+test("rejects edited supplementary Unicode text with an earlier review token", () => {
+  const reviewedSource = {
+    name: "Reviewed Unicode policy",
+    positive: "active checkout",
+    negative: "outside target \u{1F600}",
+  };
+  const reviewedFingerprint = compileBoundaryPolicy(reviewedSource).sourceFingerprint;
+  const editedSource = { ...reviewedSource, negative: "outside target \u{1F601}" };
+
+  expect(loadReviewedPolicy({
+    OMP_SOFT_BOUNDARY_POLICY: JSON.stringify(editedSource),
+    OMP_SOFT_BOUNDARY_POLICY_REVIEWED: reviewedFingerprint,
+  })).toBeUndefined();
+});
+
+test("requires fresh review instead of accepting a legacy 32-bit token", () => {
+  const unicodeSource = {
+    name: "Reviewed Unicode policy",
+    positive: "active checkout",
+    negative: "outside target \u{1F600}",
+  };
+
+  expect(loadReviewedPolicy({
+    OMP_SOFT_BOUNDARY_POLICY: JSON.stringify(unicodeSource),
+    OMP_SOFT_BOUNDARY_POLICY_REVIEWED: "7793f2f2",
+  })).toBeUndefined();
 });

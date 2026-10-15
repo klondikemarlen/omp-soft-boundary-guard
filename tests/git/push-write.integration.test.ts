@@ -1,7 +1,9 @@
-import { expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, rmSync } from "node:fs";
-import { relative } from "node:path";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, relative } from "node:path";
+
+import { expect, test } from "bun:test";
 
 import { repositoryMutationHandoff } from "../../index.ts";
 import { approve, checkout, context, external, guard } from "../extension/test-support.ts";
@@ -87,13 +89,30 @@ test("resolves the configured default push remote", async () => {
   }
 });
 
-test("classifies a quoted Git -C push", async () => {
-  const repository = `${checkout()} space`;
+test("resolves a command-local default push remote override", async () => {
+  const repository = checkout();
   try {
-    execFileSync("mv", [repository.slice(0, -6), repository]);
-    execFileSync("git", ["-C", repository, "remote", "add", "upstream", `git@github.com:${external}.git`]);
+    execFileSync("git", ["-C", repository, "remote", "add", "upstream", `https://github.com/${external}.git`]);
     const result = await guard().handler(
-      { toolName: "bash", input: { command: `echo ready && git -c user.name=Guard --no-pager -C\"${repository}\" push upstream HEAD` } },
+      { toolName: "bash", input: { command: "git -c remote.pushDefault=upstream push" } },
+      context(repository),
+    );
+    expect(result).toMatchObject({ block: true });
+  } finally {
+    rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test("resolves a command-local push URL override", async () => {
+  const repository = checkout();
+  try {
+    const result = await guard().handler(
+      {
+        toolName: "bash",
+        input: {
+          command: "git -c remote.origin.pushurl=https://github.com/elsewhere/example.git push origin HEAD",
+        },
+      },
       context(repository),
     );
     expect(result).toMatchObject({ block: true });
@@ -291,5 +310,20 @@ test("resolves relative tool directories from the session checkout", async () =>
     expect(result).toBeUndefined();
   } finally {
     rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test("resolves an external checkout from a valid quoted Git directory argument", async () => {
+  const repository = checkout();
+  const directory = mkdtempSync(join(tmpdir(), "omp-guard quoted checkout "));
+  const targetCheckout = checkout(`https://github.com/${external}.git`, directory);
+  try {
+    expect(await guard().handler({
+      toolName: "bash",
+      input: { command: `git -c user.name=Guard --no-pager -C "${targetCheckout}" push origin HEAD` },
+    }, context(repository))).toMatchObject({ block: true });
+  } finally {
+    rmSync(repository, { recursive: true, force: true });
+    rmSync(directory, { recursive: true, force: true });
   }
 });

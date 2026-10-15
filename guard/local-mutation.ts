@@ -5,9 +5,8 @@ import { fileURLToPath } from "node:url";
 
 import type { ToolCallEvent } from "../extension/contract.ts";
 import { currentCheckoutBoundary } from "../git/current-checkout.ts";
-import { shellCommandSegments } from "../shell/commands.ts";
-import { toolDirectory } from "../shell/directory.ts";
-import { executableIndex } from "../shell/executable-index.ts";
+import { gitInvocation, gitInvocationRoot, type GitInvocation } from "../git/invocation.ts";
+import { shellExecutionSegments, toolDirectory } from "../shell/directory.ts";
 
 function pathExists(path: string): boolean {
   try {
@@ -174,92 +173,202 @@ const GIT_MUTATION_COMMANDS: Record<string, true> = {
 
 const GIT_BRANCH_AND_TAG_INSPECTION_OPTIONS: Record<string, true> = {
   "-a": true,
+  "-h": true,
   "-l": true,
+  "-n": true,
   "-r": true,
   "--all": true,
+  "--help": true,
   "--list": true,
   "--remotes": true,
   "--show-current": true,
 };
 
-type GitInvocation = {
-  command: string;
-  cwd: string;
-  arguments: (string | undefined)[];
+const GIT_CONFIG_READ_ONLY_OPTIONS: Record<string, true> = {
+  "--get": true,
+  "--get-all": true,
+  "--get-color": true,
+  "--get-colorbool": true,
+  "--get-regexp": true,
+  "--get-urlmatch": true,
+  "--list": true,
+  "-l": true,
 };
 
-function branchOrTagMutates(commandArguments: (string | undefined)[]): boolean {
+const GIT_CONFIG_MUTATION_OPTIONS: Record<string, true> = {
+  "--add": true,
+  "--edit": true,
+  "--remove-section": true,
+  "--rename-section": true,
+  "--replace-all": true,
+  "--unset": true,
+  "--unset-all": true,
+};
+
+const GIT_STASH_SHOW_OPTIONS: Record<string, true> = {
+  "--include-untracked": true,
+  "--name-only": true,
+  "--name-status": true,
+  "--numstat": true,
+  "--only-untracked": true,
+  "--patch": true,
+  "--raw": true,
+  "--shortstat": true,
+  "--stat": true,
+  "--summary": true,
+  "-p": true,
+};
+
+function firstGitSubcommand(commandArguments: (string | undefined)[]): string | undefined {
   for (const argument of commandArguments) {
-    if (typeof argument !== "string") return false;
-    if (!GIT_BRANCH_AND_TAG_INSPECTION_OPTIONS[argument]) return true;
-  }
-  return false;
-}
-
-function gitInvocation(words: (string | undefined)[], cwd: string): GitInvocation | undefined {
-  const commandIndex = executableIndex(words);
-  if (words[commandIndex] !== "git") return undefined;
-
-  let directory = cwd;
-  for (let index = commandIndex + 1; index < words.length; index += 1) {
-    const word = words[index];
-    if (typeof word !== "string") return undefined;
-    if (word === "-C") {
-      const target = words[++index];
-      if (typeof target !== "string") return undefined;
-      const resolved = canonicalTarget(target, directory);
-      if (!resolved) return undefined;
-      directory = resolved;
-      continue;
+    if (typeof argument !== "string") {
+      return undefined;
     }
-    if (word.startsWith("-C") && word.length > 2) {
-      const resolved = canonicalTarget(word.slice(2), directory);
-      if (!resolved) return undefined;
-      directory = resolved;
-      continue;
+
+    if (!argument.startsWith("-")) {
+      return argument;
     }
-    if (word.startsWith("-")) return undefined;
-    return { command: word, cwd: directory, arguments: words.slice(index + 1) };
   }
+
   return undefined;
 }
 
+function isReadOnlyGitCommand(command: string, commandArguments: (string | undefined)[]): boolean {
+  const argumentEnd = commandArguments.indexOf("--");
+  const options = argumentEnd < 0 ? commandArguments : commandArguments.slice(0, argumentEnd);
+  if (options.some((argument) => argument === "-h" || argument === "--help")) {
+    return true;
+  }
+
+  if (command === "remote") {
+    const subcommand = firstGitSubcommand(commandArguments);
+    return subcommand === undefined || subcommand === "show" || subcommand === "get-url";
+  }
+
+  if (command === "config") {
+    if (
+      commandArguments.some(
+        (argument) => typeof argument === "string" && Object.hasOwn(GIT_CONFIG_MUTATION_OPTIONS, argument),
+      )
+    ) {
+      return false;
+    }
+
+    return commandArguments.some(
+      (argument) => typeof argument === "string" && Object.hasOwn(GIT_CONFIG_READ_ONLY_OPTIONS, argument),
+    );
+  }
+
+  if (command === "stash") {
+    const subcommand = firstGitSubcommand(commandArguments);
+    if (subcommand === "list") {
+      return commandArguments.length === 1;
+    }
+
+    if (subcommand !== "show") {
+      return false;
+    }
+
+    let stashReferences = 0;
+    for (const argument of commandArguments.slice(commandArguments.indexOf(subcommand) + 1)) {
+      if (typeof argument !== "string") {
+        return false;
+      }
+
+      if (
+        Object.hasOwn(GIT_STASH_SHOW_OPTIONS, argument) ||
+        argument.startsWith("--format=") ||
+        argument.startsWith("--pretty=")
+      ) {
+        continue;
+      }
+
+      if (argument.startsWith("-")) {
+        return false;
+      }
+
+      stashReferences += 1;
+      if (stashReferences > 1) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  if (command === "worktree") {
+    return firstGitSubcommand(commandArguments) === "list";
+  }
+
+  return false;
+}
+
+function branchOrTagMutates(commandArguments: (string | undefined)[]): boolean {
+  for (const argument of commandArguments) {
+    if (typeof argument !== "string") {
+      return false;
+    }
+
+    if (!Object.hasOwn(GIT_BRANCH_AND_TAG_INSPECTION_OPTIONS, argument)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 function isMutatingGitInvocation(invocation: GitInvocation): boolean {
-  if (invocation.command === "checkout" || GIT_MUTATION_COMMANDS[invocation.command] === true) return true;
+  if (invocation.arguments.some((argument) => typeof argument !== "string")) {
+    return false;
+  }
+
+  if (isReadOnlyGitCommand(invocation.command, invocation.arguments)) {
+    return false;
+  }
+
+  if (invocation.command === "checkout" || GIT_MUTATION_COMMANDS[invocation.command] === true) {
+    return true;
+  }
+
   return (invocation.command === "branch" || invocation.command === "tag") &&
     branchOrTagMutates(invocation.arguments);
 }
 
 function gitLocalMutation(event: ToolCallEvent, sessionCwd: string): LocalMutation | undefined {
-  if (event.toolName !== "bash" || typeof event.input.command !== "string") return undefined;
+  if (event.toolName !== "bash" || typeof event.input.command !== "string") {
+    return undefined;
+  }
 
   const boundary = currentCheckoutBoundary(sessionCwd);
-  if (!boundary) return undefined;
-  const resolvedCwd = toolDirectory({ cwd: event.input.cwd }, sessionCwd);
-  if (resolvedCwd && typeof resolvedCwd !== "string") return undefined;
-  let cwd = resolvedCwd ?? sessionCwd;
-
-  for (const segment of shellCommandSegments(event.input.command)) {
-    const commandIndex = executableIndex(segment.words);
-    const executable = segment.words[commandIndex];
-    if (executable === "cd") {
-      const target = segment.words[commandIndex + 1] === "--"
-        ? segment.words[commandIndex + 2]
-        : segment.words[commandIndex + 1];
-      if (typeof target !== "string") return undefined;
-      const resolved = canonicalTarget(target, cwd);
-      if (!resolved) return undefined;
-      cwd = resolved;
-    } else {
-      const invocation = gitInvocation(segment.words, cwd);
-      if (invocation && isMutatingGitInvocation(invocation)) {
-        const targetBoundary = currentCheckoutBoundary(invocation.cwd);
-        if (!targetBoundary) return undefined;
-        if (targetBoundary !== boundary) return { action: "git mutation", boundary, targets: [invocation.cwd] };
-      }
-    }
-    if (segment.nextOperator && !["&&", ";"].includes(segment.nextOperator)) return undefined;
+  if (!boundary) {
+    return undefined;
   }
+
+  for (const segment of shellExecutionSegments(event.input, sessionCwd)) {
+    const invocation = gitInvocation(segment.words);
+    if (!invocation || !isMutatingGitInvocation(invocation)) {
+      continue;
+    }
+
+    if (!segment.cwd) {
+      return undefined;
+    }
+
+    const root = gitInvocationRoot(segment.cwd, invocation.options);
+    if (!root) {
+      return undefined;
+    }
+
+    const targetBoundary = currentCheckoutBoundary(root);
+    if (!targetBoundary) {
+      return undefined;
+    }
+
+    if (targetBoundary !== boundary) {
+      return { action: "git mutation", boundary, targets: [root] };
+    }
+  }
+
   return undefined;
 }
 
@@ -270,9 +379,7 @@ function localPathMutation(event: ToolCallEvent, sessionCwd: string): LocalMutat
   const boundary = currentCheckoutBoundary(sessionCwd);
   if (!boundary || !mutation.paths.length) return undefined;
 
-  const resolvedCwd = toolDirectory(event.input, sessionCwd);
-  if (resolvedCwd && typeof resolvedCwd !== "string") return undefined;
-  const cwd = resolvedCwd ?? sessionCwd;
+  const cwd = toolDirectory(event.input, sessionCwd) ?? sessionCwd;
   const targets: string[] = [];
   for (const path of mutation.paths) {
     const target = canonicalTarget(path, cwd);

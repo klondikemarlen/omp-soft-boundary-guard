@@ -2,7 +2,7 @@ export type GitHubWrite = {
   action: string;
   target?: string;
   targetUnresolved?: boolean;
-  directories?: string[];
+  gitOptions?: string[];
   remote?: string;
   description?: string;
 };

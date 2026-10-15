@@ -8,9 +8,19 @@ export type { AskPayload, RepositoryMutationHandoff } from "./ask.ts";
 
 export function repositoryMutationHandoff(event: ToolCallEvent, cwd: string): RepositoryMutationHandoff {
   const release = releaseHandoff(event, cwd);
-  if (release.decision !== "allow") return release;
   const github = githubHandoff(event, cwd);
-  if (github.decision !== "allow") return github;
-  if (release.action) return release;
-  return localHandoff(event, cwd) ?? github;
+  if (github.decision === "ask") {
+    return github;
+  }
+
+  const local = localHandoff(event, cwd);
+  if (local) {
+    return local;
+  }
+
+  if (release.decision === "ask" || release.action) {
+    return release;
+  }
+
+  return github;
 }

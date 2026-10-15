@@ -38,8 +38,20 @@ test("marks malformed release targets unresolved", () => {
   expect(releaseTarget('npm run release -- --repo "$TARGET"')).toEqual({ unresolved: true });
 });
 
+test("does not infer a release target from a quoted argument to another command", () => {
+  expect(releaseTarget("npm run release && echo 'x; deploy' --repo elsewhere/example")).toEqual({
+    unresolved: false,
+  });
+});
+
 test("does not classify read-only checks as release tooling", () => {
   for (const command of ["bun run release:check", "git status --short", "gh release view v1.0.0", "npm run test"]) {
+    expect(releaseCommand(command)).toBeUndefined();
+  }
+});
+
+test("does not interpret object-prototype names as supported release operations", () => {
+  for (const command of ["constructor", "npm run toString", "make hasOwnProperty"]) {
     expect(releaseCommand(command)).toBeUndefined();
   }
 });

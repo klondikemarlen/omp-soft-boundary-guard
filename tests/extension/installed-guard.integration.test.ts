@@ -63,6 +63,20 @@ describe("installed default GitHub enforcement", () => {
     }
   });
 
+  test("requires GitHub approval when a compound command also targets an external release", async () => {
+    const repository = checkout();
+    const command = "npm run release -- --repo elsewhere/release && gh issue create --repo elsewhere/example --title audit --body audit";
+    try {
+      const instance = installedGuard();
+      expect(await instance.handler(
+        { toolName: "bash", input: { command } },
+        context(repository),
+      )).toMatchObject({ block: true });
+    } finally {
+      rmSync(repository, { recursive: true, force: true });
+    }
+  });
+
   test("requests fresh confirmation for a changed GitHub write payload", async () => {
     const repository = checkout();
     const originalCommand = `gh api --method POST repos/${external}/issues -f title='Original issue' -f body='Original body'`;

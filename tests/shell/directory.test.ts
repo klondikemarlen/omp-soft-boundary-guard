@@ -1,31 +1,52 @@
 import { expect, test } from "bun:test";
 
-import { toolDirectory } from "../../shell/directory.ts";
+import { shellExecutionSegments, toolDirectory } from "../../shell/directory.ts";
 
-test("tracks a supported later cd before a GitHub command", () => {
-  expect(toolDirectory({ command: "true && cd /tmp/../var && gh issue create" }, "/workspace"))
-    .toBe("/var");
+test("tracks a later directory change after read-only commands", () => {
+  const segments = shellExecutionSegments(
+    { cwd: "/workspace", command: "git status --short && cd /tmp/../var && gh issue create" },
+    "/session",
+  );
+
+  expect(segments.map(({ cwd }) => cwd)).toEqual(["/workspace", "/workspace", "/var"]);
 });
 
 test("tracks an environment-prefixed directory change", () => {
-  expect(toolDirectory({ command: "GH_HOST=github.com cd /tmp/../var && gh issue create" }, "/workspace"))
-    .toBe("/var");
+  const segments = shellExecutionSegments(
+    { command: "GH_HOST=github.com cd /tmp/../var && gh issue create" },
+    "/workspace",
+  );
+
+  expect(segments.map(({ cwd }) => cwd)).toEqual(["/workspace", "/var"]);
 });
 
 test("accepts quoted directories with spaces", () => {
-  expect(toolDirectory({ command: "cd '/tmp/external checkout' && gh issue create" }, "/workspace"))
-    .toBe("/tmp/external checkout");
+  const segments = shellExecutionSegments(
+    { command: "cd '/tmp/external checkout' && gh issue create" },
+    "/workspace",
+  );
+
+  expect(segments.map(({ cwd }) => cwd)).toEqual(["/workspace", "/tmp/external checkout"]);
 });
 
 test("normalizes explicit directories", () => {
   expect(toolDirectory({ cwd: "/tmp/../var" }, "/workspace")).toBe("/var");
 });
 
-test("fails closed for unsupported compound operators", () => {
-  expect(toolDirectory({ command: "cd /tmp/external || cd /workspace && gh issue create" }, "/workspace"))
-    .toEqual({ unresolved: true });
+test("propagates unresolved cwd after unsupported control flow", () => {
+  const segments = shellExecutionSegments(
+    { command: "git status --short || cd /tmp/external && gh issue create" },
+    "/workspace",
+  );
+
+  expect(segments.map(({ cwd }) => cwd)).toEqual(["/workspace", undefined, undefined]);
 });
 
-test("does not apply a directory change after the mutation", () => {
-  expect(toolDirectory({ command: "gh issue create && cd /tmp/external" }, "/workspace")).toBeUndefined();
+test("applies cd to later commands rather than the cd command itself", () => {
+  const segments = shellExecutionSegments(
+    { command: "cd /tmp/external && gh issue create && cd /workspace" },
+    "/session",
+  );
+
+  expect(segments.map(({ cwd }) => cwd)).toEqual(["/session", "/tmp/external", "/tmp/external"]);
 });

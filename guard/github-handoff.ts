@@ -1,5 +1,3 @@
-import { resolve } from "node:path";
-
 import type { ToolCallEvent } from "../extension/contract.ts";
 import { currentCheckoutRepository, currentCheckoutRoot } from "../git/current-checkout.ts";
 import { defaultPushRemote } from "../git/default-push-remote.ts";
@@ -10,47 +8,70 @@ import { pythonGitHubCliWrites } from "../github/python-cli-write.ts";
 import { remoteRepository } from "../github/remote-repository.ts";
 import { recognizedGitHubWrite } from "../github/recognized-write.ts";
 import type { GitHubWrite } from "../github/write.ts";
-import { toolDirectory } from "../shell/directory.ts";
-import { shellCommands } from "../shell/commands.ts";
+import { shellExecutionSegments, toolDirectory } from "../shell/directory.ts";
 import { askHandoff, type RepositoryMutationHandoff } from "./ask.ts";
 import { guardDecision } from "./decision.ts";
 
-function writeFor(event: ToolCallEvent): GitHubWrite | undefined {
-  if (event.toolName === "write") return recognizedGitHubWrite(event.input);
+type LocatedGitHubWrite = {
+  write: GitHubWrite;
+  cwd?: string;
+};
+
+function writeFor(event: ToolCallEvent, sessionCwd: string): LocatedGitHubWrite | undefined {
+  if (event.toolName === "write") {
+    const write = recognizedGitHubWrite(event.input);
+    return write ? { write, cwd: toolDirectory(event.input, sessionCwd) ?? sessionCwd } : undefined;
+  }
+
   if (event.toolName === "eval") {
     const code = event.input.code;
     if (event.input.language !== "py" || typeof code !== "string") {
       return undefined;
     }
 
-    return pythonGitHubCliWrites(event.input, code);
+    const write = pythonGitHubCliWrites(event.input, code);
+    return write ? { write, cwd: toolDirectory(event.input, sessionCwd) ?? sessionCwd } : undefined;
   }
 
   if (event.toolName !== "bash" || typeof event.input.command !== "string") {
     return undefined;
   }
 
-  const writes = shellCommands(event.input.command)
-    .map((words) => gitPushWrite(words) ?? recognizedGitHubWrite(event.input, words))
-    .filter((write): write is GitHubWrite => write !== undefined);
-  if (writes.length === 1) return writes[0];
-  return writes.length > 1 ? { action: "GitHub write", targetUnresolved: true } : undefined;
+  let locatedWrite: LocatedGitHubWrite | undefined;
+  for (const segment of shellExecutionSegments(event.input, sessionCwd)) {
+    const write = gitPushWrite(segment.words) ?? recognizedGitHubWrite(event.input, segment.words);
+    if (!write) {
+      continue;
+    }
+
+    if (locatedWrite) {
+      return { write: { action: "GitHub write", targetUnresolved: true } };
+    }
+
+    locatedWrite = { write, cwd: segment.cwd };
+  }
+  return locatedWrite;
 }
 
 export function githubHandoff(event: ToolCallEvent, cwd: string): RepositoryMutationHandoff {
-  const write = writeFor(event);
-  if (!write) return { decision: "allow" };
+  const located = writeFor(event, cwd);
+  if (!located) {
+    return { decision: "allow" };
+  }
 
-  const inputDirectory = toolDirectory(event.input, cwd);
-  const toolCwd = typeof inputDirectory === "string" ? inputDirectory : cwd;
-  if (inputDirectory && typeof inputDirectory !== "string") write.targetUnresolved = true;
-  const commandCwd = write.directories?.reduce((directoryCwd, directory) => resolve(directoryCwd, directory), toolCwd) ?? toolCwd;
-  if (write.action === "git push" && !write.targetUnresolved) {
-    const remote = write.remote ?? defaultPushRemote(commandCwd);
-    write.target = remoteRepository(remote) ?? pushRepository(commandCwd, remote);
+  const { write } = located;
+  const commandCwd = located.cwd;
+  if (commandCwd === undefined) {
+    write.targetUnresolved = true;
+  }
+
+  if (write.action === "git push" && !write.targetUnresolved && commandCwd !== undefined) {
+    const remote = write.remote ?? defaultPushRemote(commandCwd, write.gitOptions);
+    write.target = remoteRepository(remote) ?? pushRepository(commandCwd, remote, write.gitOptions);
     write.targetUnresolved = !write.target;
   }
-  if (write.action !== "git push" && !write.target && !write.targetUnresolved) {
+
+  if (write.action !== "git push" && !write.target && !write.targetUnresolved && commandCwd !== undefined) {
     write.target = currentCheckoutRepository(commandCwd);
   }
 

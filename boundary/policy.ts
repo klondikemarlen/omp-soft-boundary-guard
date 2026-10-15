@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 const MAX_TEXT_LENGTH = 20_000;
 const MAX_LINES = 128;
 const MAX_LINE_LENGTH = 512;
@@ -66,15 +68,6 @@ function descriptionLines(value: string): string[] {
     .map((line) => line.slice(0, MAX_LINE_LENGTH));
 }
 
-function fingerprint(value: string): string {
-  let hash = 2166136261;
-  for (const character of value) {
-    hash ^= character.charCodeAt(0);
-    hash = Math.imul(hash, 16777619);
-  }
-  return (hash >>> 0).toString(16).padStart(8, "0");
-}
-
 export function compileBoundaryPolicy(source: BoundaryPolicySource): CompiledBoundaryPolicy {
   const name = text(source.name, "name");
   const positive = text(source.positive, "positive");
@@ -92,7 +85,7 @@ export function compileBoundaryPolicy(source: BoundaryPolicySource): CompiledBou
     negative: descriptionLines(negative),
     behavior,
     rules: [],
-    sourceFingerprint: fingerprint(normalizedSource),
+    sourceFingerprint: createHash("sha256").update(normalizedSource, "utf8").digest("hex"),
   };
 }
 

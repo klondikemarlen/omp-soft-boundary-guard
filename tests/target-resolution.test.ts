@@ -18,11 +18,13 @@ function checkout(repository: string): string {
   return directory;
 }
 
-test("asks for a GitHub write in the checkout selected by shell cd", () => {
+test("when shell cd selects another checkout for a GitHub write, asks for approval", () => {
+  // Arrange
   const sessionCheckout = checkout(currentRepository);
   const targetCheckout = checkout(externalRepository);
 
   try {
+    // Act
     const handoff = repositoryMutationHandoff(
       {
         toolName: "bash",
@@ -34,6 +36,7 @@ test("asks for a GitHub write in the checkout selected by shell cd", () => {
       sessionCheckout,
     );
 
+    // Assert
     expect(handoff).toMatchObject({
       decision: "ask",
       action: "GitHub issue creation",
@@ -46,11 +49,13 @@ test("asks for a GitHub write in the checkout selected by shell cd", () => {
   }
 });
 
-test("keeps tracking the mutation checkout after a read-only Git segment", () => {
+test("when a read-only Git segment precedes a mutation, tracks the mutation checkout", () => {
+  // Arrange
   const sessionCheckout = checkout(currentRepository);
   const targetCheckout = checkout(externalRepository);
 
   try {
+    // Act
     const handoff = repositoryMutationHandoff(
       {
         toolName: "bash",
@@ -61,6 +66,7 @@ test("keeps tracking the mutation checkout after a read-only Git segment", () =>
       },
       sessionCheckout,
     );
+    // Assert
 
     expect(handoff).toMatchObject({
       decision: "ask",
@@ -74,16 +80,19 @@ test("keeps tracking the mutation checkout after a read-only Git segment", () =>
   }
 });
 
-test("uses the tool execution checkout as a release target without changing its boundary", () => {
+test("when the tool execution checkout is external, uses it as the release target", () => {
+  // Arrange
   const sessionCheckout = checkout(currentRepository);
   const toolCheckout = checkout(externalRepository);
 
   try {
+    // Act
     const handoff = releaseHandoff(
       { toolName: "bash", input: { cwd: toolCheckout, command: "npm run release" } },
       sessionCheckout,
     );
 
+    // Assert
     expect(handoff).toMatchObject({
       decision: "ask",
       currentRepository,
@@ -95,11 +104,13 @@ test("uses the tool execution checkout as a release target without changing its 
   }
 });
 
-test("uses the shell cd checkout as a release target without changing its boundary", () => {
+test("when shell cd selects an external checkout, uses it as the release target", () => {
+  // Arrange
   const sessionCheckout = checkout(currentRepository);
   const targetCheckout = checkout(externalRepository);
 
   try {
+    // Act
     const handoff = releaseHandoff(
       {
         toolName: "bash",
@@ -108,6 +119,7 @@ test("uses the shell cd checkout as a release target without changing its bounda
       sessionCheckout,
     );
 
+    // Assert
     expect(handoff).toMatchObject({
       decision: "ask",
       currentRepository,
@@ -119,25 +131,30 @@ test("uses the shell cd checkout as a release target without changing its bounda
   }
 });
 
-test("keeps a release in the same owned checkout silently allowed", () => {
+test("when a release targets the owned checkout, allows it silently", () => {
+  // Arrange
   const repository = checkout(currentRepository);
 
   try {
+    // Act
     const handoff = releaseHandoff(
       { toolName: "bash", input: { cwd: repository, command: "npm run release" } },
       repository,
     );
 
+    // Assert
     expect(handoff).toMatchObject({ decision: "allow", currentRepository, target: currentRepository });
   } finally {
     rmSync(repository, { recursive: true, force: true });
   }
 });
 
-test("does not treat quoted arguments to another command as a release target", () => {
+test("when release-like arguments belong to another command, ignores them as targets", () => {
+  // Arrange
   const repository = checkout(currentRepository);
 
   try {
+    // Act
     const handoff = releaseHandoff(
       {
         toolName: "bash",
@@ -149,16 +166,19 @@ test("does not treat quoted arguments to another command as a release target", (
       repository,
     );
 
+    // Assert
     expect(handoff).toMatchObject({ decision: "allow", currentRepository, target: currentRepository });
   } finally {
     rmSync(repository, { recursive: true, force: true });
   }
 });
 
-test("resolves the release checkout inside a supported nested shell", () => {
+test("when a nested shell changes checkout before release, resolves that target", () => {
+  // Arrange
   const sessionCheckout = checkout(currentRepository);
   const targetCheckout = checkout(externalRepository);
   try {
+    // Act / Assert
     expect(releaseHandoff({
       toolName: "bash",
       input: { command: `bash -c 'cd ${targetCheckout} && npm run release'` },

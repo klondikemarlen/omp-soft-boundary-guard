@@ -1,11 +1,12 @@
 {
   "name": "omp-soft-boundary-guard",
-  "version": "2.1.2",
+  "version": "2.1.3",
   "description": "OMP soft boundary guard with one-shot approval for recognized external GitHub writes and advisory warnings for other mutations.",
   "type": "module",
   "scripts": {
     "test": "bun test",
-    "release:check": "bun run scripts/release-check.ts && bun node_modules/typescript/bin/tsc --noEmit && bun test",
+    "lint": "oxlint --deny-warnings .",
+    "release:check": "bun run scripts/release-check.ts && bun run lint && bun node_modules/typescript/bin/tsc --noEmit && bun test",
     "handoff": "bun run bin/repository-mutation-handoff.ts",
     "reinstall": "bun run scripts/reinstall.ts"
   },
@@ -24,6 +25,7 @@
   },
   "devDependencies": {
     "@types/bun": "^1.3.14",
+    "oxlint": "1.93.0",
     "typescript": "^7.0.2"
   }
 }

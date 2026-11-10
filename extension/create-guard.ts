@@ -164,14 +164,19 @@ function requestConfirmation(
     return { block: true, reason: `${reason} The previous confirmation was not approved; no duplicate confirmation was requested.` };
   }
 
-  const question = handoff.ask.questions[0].question;
+  const question = handoff.question;
   if (authorization.consumeExternal(question)) return inputResult(revisedInput);
 
-  const authorizationDetail = authorizationResult === "mismatched"
-    ? " An approval exists but does not match this exact retry."
-    : " No matching approval was recorded.";
-  if (!authorization.begin(handoff.fingerprint, question, identity, handoff, handoff.ask.questions[0].id)) {
-    return { block: true, reason: `${reason}${authorizationDetail} A confirmation is already pending.` };
+  const authorizationDetail = authorizationResult === "unsupported"
+    ? " The previous Ask result was cancelled, failed, timed out, or unsupported; no approval was recorded. A new confirmation is required."
+    : authorizationResult === "mismatched"
+      ? " An approval exists but does not match this exact retry."
+      : " No matching approval was recorded.";
+  if (!authorization.begin(handoff.fingerprint, question, identity, handoff, handoff.questionId)) {
+    return {
+      block: true,
+      reason: `${reason}${authorizationDetail} A confirmation is already pending. Call the ask tool with the exact previously requested HTML payload and wait for its result before retrying. If the host cannot accept HTML Ask forms or return named answers, stop and report the unsupported Ask contract; do not retry the mutation or substitute an approval.`,
+    };
   }
 
   try {

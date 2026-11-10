@@ -1,7 +1,8 @@
-import type { RepositoryMutationHandoff } from "../guard/ask.ts";
+import { confirmationForm, type RepositoryMutationHandoff } from "../guard/ask.ts";
 import type { ToolResultEvent } from "./contract.ts";
 import {
   approvedExternalQuestion,
+  confirmationAnswer,
   externalConfirmationQuestionId,
   isApprovedConfirmation,
   isApprovedExternalConfirmation,
@@ -10,7 +11,7 @@ import {
 } from "../guard/approved-confirmation.ts";
 import { confirmationQuestionId } from "../guard/confirmation-question.ts";
 
-export type AuthorizationResult = "authorized" | "missing" | "mismatched" | "rejected";
+export type AuthorizationResult = "authorized" | "missing" | "mismatched" | "rejected" | "unsupported";
 type AuthorizationHandoff = Extract<RepositoryMutationHandoff, { decision: "ask" }>;
 
 export class AuthorizationState {
@@ -24,6 +25,7 @@ export class AuthorizationState {
   #authorized: { key: string; identity?: string; handoff?: AuthorizationHandoff } | undefined;
   #rejectedKey: string | undefined;
   #mismatchedKey: string | undefined;
+  #unsupportedKey: string | undefined;
   #externalQuestion: string | undefined;
   #sessionDirectory: string | undefined;
 
@@ -38,14 +40,27 @@ export class AuthorizationState {
     this.#authorized = undefined;
     this.#rejectedKey = undefined;
     this.#mismatchedKey = undefined;
+    this.#unsupportedKey = undefined;
     this.#externalQuestion = undefined;
   }
 
-
   record(event: ToolResultEvent): void {
-    if (event.toolName !== "ask" || event.isError) return;
+    if (event.toolName !== "ask") return;
 
     const pending = this.#pending;
+    if (pending && event.input.html === confirmationForm(pending.question, pending.questionId)) {
+      this.#pending = undefined;
+      if (!event.isError && isApprovedConfirmation(event.input, event.details, pending.question, pending.questionId)) {
+        this.#authorized = { key: pending.key, identity: pending.identity, handoff: pending.handoff };
+      } else if (!event.isError && confirmationAnswer(event.details, pending.questionId) === "Reject") {
+        this.#rejectedKey = pending.key;
+      } else {
+        this.#unsupportedKey = pending.key;
+      }
+      return;
+    }
+    if (event.isError) return;
+
     const externalQuestion = approvedExternalQuestion(event.input, event.details);
     const submittedQuestion =
       (pending && submittedConfirmationQuestion(event.input, pending.questionId)) ??
@@ -65,9 +80,7 @@ export class AuthorizationState {
     }
 
     this.#pending = undefined;
-    if (isApprovedConfirmation(event.input, event.details, pending.question, pending.questionId)) {
-      this.#authorized = { key: pending.key, identity: pending.identity, handoff: pending.handoff };
-    } else if (externalQuestion && isApprovedExternalConfirmation(event.input, event.details, pending.question)) {
+    if (externalApprovalMatches) {
       this.#externalQuestion = externalQuestion;
     } else {
       this.#rejectedKey = pending.key;
@@ -95,6 +108,9 @@ export class AuthorizationState {
     const mismatchedKey = this.#mismatchedKey;
     this.#mismatchedKey = undefined;
     if (mismatchedKey === key) return "mismatched";
+    const unsupportedKey = this.#unsupportedKey;
+    this.#unsupportedKey = undefined;
+    if (unsupportedKey === key) return "unsupported";
     const rejectedKey = this.#rejectedKey;
     if (rejectedKey === key) return "rejected";
     this.#rejectedKey = undefined;
@@ -138,6 +154,7 @@ export class AuthorizationState {
 
     this.#rejectedKey = undefined;
     this.#mismatchedKey = undefined;
+    this.#unsupportedKey = undefined;
     this.#pending = { key, question, questionId, identity, handoff };
     return true;
   }

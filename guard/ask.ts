@@ -7,15 +7,13 @@ import {
   type BoundaryCategory,
 } from "./confirmation-question.ts";
 
-export type AskPayload = {
-  questions: [{
-    id: string;
-    question: string;
-    options: { label: string; description: string; preview: null }[];
-    header: string;
-    multi: false;
-  }];
-};
+export type AskPayload = { html: string };
+
+export function confirmationForm(question: string, questionId: string): string {
+  const escapedQuestion = Bun.escapeHTML(question);
+  const escapedQuestionId = Bun.escapeHTML(questionId);
+  return `<form><fieldset><legend>Repository boundary</legend><p>${escapedQuestion}</p><label><input type="radio" name="${escapedQuestionId}" value="Approve">Approve</label><label><input type="radio" name="${escapedQuestionId}" value="Reject" checked>Reject</label></fieldset></form>`;
+}
 
 export type RepositoryMutationHandoff =
   | { decision: "allow"; action?: string; currentRepository?: string; target?: string; input?: ToolInput }
@@ -26,6 +24,8 @@ export type RepositoryMutationHandoff =
       currentRepository?: string;
       target: string;
       fingerprint: string;
+      question: string;
+      questionId: string;
       ask: AskPayload;
       input?: ToolInput;
     };
@@ -48,17 +48,8 @@ export function askHandoff(
     currentRepository,
     target,
     fingerprint: authorizationKey(event.toolName, action, target, event.input, context),
-    ask: {
-      questions: [{
-        id: questionId,
-        question,
-        options: [
-          { label: "Approve", description: `Allow exactly this ${action} to ${target} once.`, preview: null },
-          { label: "Reject", description: "Keep this write blocked.", preview: null },
-        ],
-        header: "Repository boundary",
-        multi: false,
-      }],
-    },
+    question,
+    questionId,
+    ask: { html: confirmationForm(question, questionId) },
   };
 }

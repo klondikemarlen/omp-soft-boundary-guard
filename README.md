@@ -23,7 +23,7 @@ Python recognition parses syntax without executing the supplied code or requirin
 
 ## Handoff inspection
 
-`bun run handoff` reads `{"event":{"toolName":…,"input":…},"cwd":"…"}` from standard input and writes one JSON packet. Its `decision` is `allow` or `ask`; an `ask` packet includes the exact standard OMP Ask payload, active repository, resolved mutation target, action, and exact-retry fingerprint.
+`bun run handoff` reads `{"event":{"toolName":…,"input":…},"cwd":"…"}` from standard input and writes one JSON packet. Its `decision` is `allow` or `ask`; an `ask` packet includes the exact OMP HTML-form Ask payload, confirmation question and field name, active repository, resolved mutation target, action, and exact-retry fingerprint.
 
 ```bash
 printf '%s\n' '{"event":{"toolName":"bash","input":{"command":"git push https://github.com/elsewhere/example.git HEAD"}}}' | bun run handoff
@@ -36,6 +36,8 @@ omp plugin install github:klondikemarlen/omp-soft-boundary-guard
 ```
 
 After installing or reinstalling, start a new OMP process before retesting. Reloading extensions does not replace a module already loaded by the process.
+
+Confirmation uses OMP's HTML-form Ask API (verified with OMP 18.18.7). Submit the generated form unchanged: approval binds its exact HTML and named answer to the pending invocation. Reject is preselected; cancellation, tool errors, malformed answers, and timeout submissions never grant approval. An unrelated form cannot approve a pending write. Hosts exposing only the older `questions[]` Ask API must upgrade before using this confirmation flow; do not translate the form into a different prompt.
 
 Approvals are held only in process memory; a plugin reload clears them, and a new OMP process does not carry an earlier approval. The blocked handoff is cached in memory for the pending confirmation and one exact retry. Directories within the same canonical Git root share that approval scope; a different worktree or checkout does not. A changed execution input or resolved target never uses the cached artifact or approval; an approved exact release remains pending until that invocation starts, another confirmation replaces it, the checkout changes, it is rejected, the plugin reloads, or the process ends. No prompt artifact is written to disk or retained across runs.
 

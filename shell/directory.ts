@@ -10,7 +10,7 @@ export type ShellExecutionSegment = ShellCommandSegment & {
 };
 
 function unquoteDirectory(directory: string): string | undefined {
-  return /[$`(){}*?\[\]]/.test(directory) ? undefined : directory;
+  return /[$`(){}*?[\]]/.test(directory) ? undefined : directory;
 }
 
 function explicitDirectory(input: ToolInput, sessionCwd: string): string | undefined {

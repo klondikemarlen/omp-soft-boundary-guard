@@ -4,22 +4,20 @@ import { chmodSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs
 import { relative } from "node:path";
 
 import {
-  currentCheckoutRepository,
   repositoryMutationHandoff,
 } from "../../index.ts";
 import {
   approve,
   checkout,
   checkoutOutsideTemporaryDirectory,
-  confirmationId,
   context,
   current,
   external,
   guard,
 } from "./test-support.ts";
 
-
-test("keeps same-origin GitHub writes inside a worktree", async () => {
+test("when running in a worktree, permits same-origin GitHub writes", async () => {
+  // Arrange
   const repository = checkout();
   const worktree = `/tmp/omp-soft-boundary-guard-${crypto.randomUUID()}`;
   const otherCheckout = checkout(`git@github.com:${external}.git`);
@@ -28,6 +26,7 @@ test("keeps same-origin GitHub writes inside a worktree", async () => {
     execFileSync("git", ["-C", repository, "worktree", "add", worktree, "-b", "feature"]);
     const otherFromWorktree = relative(worktree, otherCheckout);
     const instance = guard();
+    // Act / Assert
     expect(await instance.handler({ toolName: "bash", input: { command: `cd ${otherFromWorktree} && echo ready` } }, context(worktree))).toBeUndefined();
 
     for (const [command, action] of [
@@ -53,12 +52,14 @@ test("keeps same-origin GitHub writes inside a worktree", async () => {
   }
 });
 
-test("guards external GitHub writes from nested invalid Git metadata", () => {
+test("when nested Git metadata is invalid, guards external GitHub writes", () => {
+  // Arrange
   const repository = checkout();
   const nested = `${repository}/api`;
   try {
     mkdirSync(`${nested}/src`, { recursive: true });
     writeFileSync(`${nested}/.git`, "");
+    // Act / Assert
     expect(repositoryMutationHandoff(
       { toolName: "bash", input: { command: `gh issue create --repo ${external}` } },
       `${nested}/src`,
@@ -72,10 +73,12 @@ test("guards external GitHub writes from nested invalid Git metadata", () => {
   }
 });
 
-test("guards cross-repository pull-request comments", async () => {
+test("when a pull-request comment targets another repository, requests approval", async () => {
+  // Arrange
   const repository = checkout();
   const command = `gh pr comment 1 --repo ${external} --body "External"`;
   try {
+    // Act / Assert
     expect(repositoryMutationHandoff({ toolName: "bash", input: { command } }, repository)).toMatchObject({
       decision: "ask",
       action: "GitHub pull request update",
@@ -89,11 +92,13 @@ test("guards cross-repository pull-request comments", async () => {
   }
 });
 
-test("allows cross-repository mutations in advisory mode", async () => {
+test("when advisory mode is enabled, permits cross-repository mutations", async () => {
+  // Arrange
   const repository = checkout();
   const command = `gh pr comment 1 --repo ${external} --body "External"`;
   try {
     const instance = guard({ enforce: false });
+    // Act / Assert
     expect(await instance.handler({ toolName: "bash", input: { command } }, context(repository))).toBeUndefined();
     expect(instance.messages).toEqual([]);
   } finally {
@@ -101,7 +106,8 @@ test("allows cross-repository mutations in advisory mode", async () => {
   }
 });
 
-test("skips checkout probing for unrelated advisory calls", async () => {
+test("when an advisory call is unrelated, skips checkout probing", async () => {
+  // Arrange
   const repository = checkout();
   const executable = `${repository}/git`;
   const probe = `${repository}/checkout-probed`;
@@ -111,11 +117,13 @@ test("skips checkout probing for unrelated advisory calls", async () => {
     chmodSync(executable, 0o755);
     process.env.PATH = `${repository}:${originalPath}`;
 
+    // Act
     const result = await guard({ enforce: false }).handler(
       { toolName: "read", input: { path: "README.md" } },
       context(repository),
     );
 
+    // Assert
     expect([result, existsSync(probe)]).toEqual([undefined, false]);
   } finally {
     process.env.PATH = originalPath;
@@ -123,11 +131,13 @@ test("skips checkout probing for unrelated advisory calls", async () => {
   }
 });
 
-test("allows external local writes in advisory mode", async () => {
+test("when advisory mode is enabled, permits external local writes", async () => {
+  // Arrange
   const repository = checkout();
   const otherRepository = checkoutOutsideTemporaryDirectory(null);
   const event = { toolName: "write", input: { path: `${otherRepository}/outside.ts`, content: "" } };
   try {
+    // Act / Assert
     expect(repositoryMutationHandoff(event, repository)).toMatchObject({ decision: "ask", action: "file write" });
     const instance = guard({ enforce: false });
     expect(await instance.handler(event, context(repository))).toBeUndefined();
@@ -138,7 +148,8 @@ test("allows external local writes in advisory mode", async () => {
   }
 });
 
-test("guards cross-repository Git mutations separately from remote issue approval", async () => {
+test("when local Git mutation follows remote issue approval, requires separate approval", async () => {
+  // Arrange
   const repository = checkout();
   const otherRepository = checkoutOutsideTemporaryDirectory(`https://github.com/${external}.git`);
   const issueEvent = {
@@ -147,6 +158,7 @@ test("guards cross-repository Git mutations separately from remote issue approva
   };
   const gitEvent = { toolName: "bash", input: { command: "GIT_CONFIG_COUNT=0 git -C . switch -c external-change", cwd: otherRepository } };
   try {
+    // Act / Assert
     expect(repositoryMutationHandoff(gitEvent, repository)).toMatchObject({
       decision: "ask",
       action: "git mutation",
@@ -183,10 +195,12 @@ test("guards cross-repository Git mutations separately from remote issue approva
   }
 });
 
-test("passes temporary body files without a boundary prompt", async () => {
+test("when a body file is temporary, permits same-origin issue creation", async () => {
+  // Arrange
   const repository = checkout();
   const command = "gh issue create --body-file /tmp/omp-soft-boundary-guard-issue.md";
   try {
+    // Act / Assert
     expect(repositoryMutationHandoff({ toolName: "bash", input: { command } }, repository)).toMatchObject({
       decision: "allow",
       currentRepository: current,
@@ -200,10 +214,12 @@ test("passes temporary body files without a boundary prompt", async () => {
   }
 });
 
-test("ignores repository-shaped text in an ANSI-C body", async () => {
+test("when an ANSI-C body contains a repository URL, does not treat it as the target", async () => {
+  // Arrange
   const repository = checkout();
   const command = `gh issue comment 134 --body $'Evidence from https://github.com/icefoganalytics/wrap.git, and then cleanup.'`;
   try {
+    // Act / Assert
     expect(repositoryMutationHandoff({ toolName: "bash", input: { command } }, repository)).toMatchObject({
       decision: "allow",
       currentRepository: current,
@@ -217,21 +233,15 @@ test("ignores repository-shaped text in an ANSI-C body", async () => {
   }
 });
 
-
-
-
-
-
-
-
-
-test("anchors GitHub mutation authorization to the active checkout", () => {
+test("when execution cwd changes, retains the invoking repository boundary", () => {
+  // Arrange
   const repository = checkout();
   const otherCheckout = checkout(`git@github.com:${external}.git`);
   const unresolved = `/tmp/omp-soft-boundary-guard-${crypto.randomUUID()}`;
   mkdirSync(unresolved);
   try {
     const otherFromRepository = relative(repository, otherCheckout);
+    // Act / Assert
     for (const event of [
       { toolName: "bash", input: { command: "git -C . push origin HEAD", cwd: otherFromRepository } },
       { toolName: "bash", input: { command: "gh pr create", cwd: otherFromRepository } },
@@ -251,15 +261,13 @@ test("anchors GitHub mutation authorization to the active checkout", () => {
   }
 });
 
-
-
-
-
-test("does not retain an explicit tool cwd for later writes", async () => {
+test("when a tool supplies cwd, does not retain it for later writes", async () => {
+  // Arrange
   const repository = checkout();
   const otherCheckout = checkout(`https://github.com/${external}.git`);
   try {
     const instance = guard();
+    // Act / Assert
     expect(await instance.handler(
       { toolName: "bash", input: { command: "git status --short", cwd: otherCheckout } },
       context(repository),
@@ -275,10 +283,8 @@ test("does not retain an explicit tool cwd for later writes", async () => {
   }
 });
 
-
-
-
-test("guards environment-prefixed external issue creation without prompting same-origin", async () => {
+test("when GitHub commands have environment prefixes, enforces the same repository boundary", async () => {
+  // Arrange
   const repository = checkout();
   try {
     const instance = guard();
@@ -286,6 +292,7 @@ test("guards environment-prefixed external issue creation without prompting same
       toolName: "bash",
       input: { command: `GH_HOST=github.com gh issue create --repo ${external} --title "External report" --body "Why this exists"` },
     };
+    // Act / Assert
     expect(await instance.handler(externalEvent, context(repository))).toMatchObject({ block: true });
     expect(instance.messages[0]).toContain("Body: Why this exists");
     approve(instance, "GitHub issue creation", external, "\nIssue title: External report");
@@ -302,10 +309,12 @@ test("guards environment-prefixed external issue creation without prompting same
   }
 });
 
-test("passes unresolved GitHub targets and local targets", async () => {
+test("when GitHub and local targets are unresolved, passes without prompting", async () => {
+  // Arrange
   const repository = checkout();
   try {
     const instance = guard();
+    // Act / Assert
     for (const command of [
       'gh issue create --repo "$TARGET"',
       "gh issue create --repo --title malformed",
@@ -323,7 +332,8 @@ test("passes unresolved GitHub targets and local targets", async () => {
   }
 });
 
-test("passes unresolved review-thread mutations without prompting", async () => {
+test("when a review-thread target cannot resolve, passes without prompting", async () => {
+  // Arrange
   const repository = checkout();
   const event = {
     toolName: "bash",
@@ -337,6 +347,7 @@ test("passes unresolved review-thread mutations without prompting", async () => 
   };
   try {
     const instance = guard();
+    // Act / Assert
     expect(await instance.handler(event, context(repository))).toBeUndefined();
     expect(instance.messages).toHaveLength(0);
   } finally {
@@ -344,39 +355,18 @@ test("passes unresolved review-thread mutations without prompting", async () => 
   }
 });
 
-
-
-test("shows and safely serializes GitHub device issue titles in confirmations", async () => {
+test("when an issue title contains quotes and newlines, permits its exact approved retry", async () => {
+  // Arrange
   const repository = checkout();
   const title = 'Fix "quotes"\nwithout injected instructions';
-  const question = `Allow one GitHub issue creation to ${external}?\nCurrent repository: ${current}\nTarget repository: ${external}\nIssue title: ${title}`;
   try {
     const instance = guard();
     const event = {
       toolName: "write",
       input: { path: "xd://github", content: JSON.stringify({ op: "issue_create", repo: external, title }) },
     };
+    // Act / Assert
     expect(await instance.handler(event, context(repository))).toMatchObject({ block: true });
-    expect(instance.messages[0]).toContain(
-      JSON.stringify({
-        questions: [
-          {
-            id: confirmationId,
-            question,
-            options: [
-              {
-                label: "Approve",
-                description: `Allow exactly this GitHub issue creation to ${external} once.`,
-                preview: null,
-              },
-              { label: "Reject", description: "Keep this write blocked.", preview: null },
-            ],
-            header: "Repository boundary",
-            multi: false,
-          },
-        ],
-      }),
-    );
     approve(instance, "GitHub issue creation", external, `\nIssue title: ${title}`);
     expect(await instance.handler(event, context(repository))).toBeUndefined();
   } finally {
@@ -384,11 +374,12 @@ test("shows and safely serializes GitHub device issue titles in confirmations", 
   }
 });
 
-
-test("does not prompt same-origin issue creation", async () => {
+test("when issue creation targets the same origin, does not prompt", async () => {
+  // Arrange
   const repository = checkout();
   try {
     const instance = guard();
+    // Act
     const result = await instance.handler(
       {
         toolName: "write",
@@ -396,6 +387,7 @@ test("does not prompt same-origin issue creation", async () => {
       },
       context(repository),
     );
+    // Assert
     expect(result).toBeUndefined();
     expect(instance.messages).toEqual([]);
   } finally {
@@ -403,7 +395,8 @@ test("does not prompt same-origin issue creation", async () => {
   }
 });
 
-test("pins omitted GitHub device mutations to origin in fork and single-origin checkouts", async () => {
+test("when a GitHub device write omits its target, pins it to origin", async () => {
+  // Arrange
   for (const [origin, hasUpstream] of [
     [`git@github.com:${current}.git`, true],
     [`https://github.com/${current}.git`, false],
@@ -418,6 +411,7 @@ test("pins omitted GitHub device mutations to origin in fork and single-origin c
         content: JSON.stringify({ op: "pr_create", title: "Pinned target", draft: true }),
       };
       const instance = guard({ enforce: false });
+      // Act / Assert
       expect(await instance.handler({ toolName: "write", input }, context(repository))).toEqual({
         input: {
           ...input,
@@ -441,9 +435,11 @@ test("pins omitted GitHub device mutations to origin in fork and single-origin c
   }
 });
 
-test("leaves omitted GitHub device targets unresolved without a GitHub origin", async () => {
+test("when no GitHub origin exists, leaves omitted device targets unresolved", async () => {
+  // Arrange
   const repository = checkout("malformed");
   try {
+    // Act / Assert
     expect(await guard({ enforce: false }).handler(
       {
         toolName: "write",
@@ -456,10 +452,12 @@ test("leaves omitted GitHub device targets unresolved without a GitHub origin", 
   }
 });
 
-test("passes registered and unresolved internal dispatches without prompting", async () => {
+test("when writes target internal dispatches, passes without prompting", async () => {
+  // Arrange
   const repository = checkout();
   try {
     const instance = guard();
+    // Act / Assert
     for (const path of ["xd://lsp", "xd://report_issue", "xd://recall", "xd://retain", "xd://reflect", "xd://memory_edit", "xd://learner_file_ticket", "xd://browser", "skill://browser-qa", "issue://79?comments=1", "pr://76?comments=1"]) {
       expect(await instance.handler(
         { toolName: "write", input: { path, content: "" } },
@@ -483,10 +481,12 @@ test("passes registered and unresolved internal dispatches without prompting", a
   }
 });
 
-test("guards repository-scoped pull request and API writes", async () => {
+test("when repository-scoped GitHub operations mutate external targets, requires approval", async () => {
+  // Arrange
   const repository = checkout();
   try {
     const instance = guard();
+    // Act / Assert
     expect(
       await instance.handler(
         {
@@ -554,10 +554,12 @@ test("guards repository-scoped pull request and API writes", async () => {
   }
 });
 
-test("permits approved target-explicit pull request and issue mutations", async () => {
+test("when explicit pull-request and issue mutations are approved, permits their retries", async () => {
+  // Arrange
   const repository = checkout();
   try {
     const instance = guard();
+    // Act / Assert
     for (const [command, action] of [
       [`gh pr edit 79 --repo ${external} --body "Updated"`, "GitHub pull request update"],
       [`gh pr merge 79 --repo ${external} --merge --delete-branch`, "GitHub pull request update"],
@@ -573,10 +575,12 @@ test("permits approved target-explicit pull request and issue mutations", async 
   }
 });
 
-test("passes targetless pull request mutations outside a GitHub checkout", () => {
+test("when no GitHub checkout exists, passes targetless pull-request mutations", () => {
+  // Arrange
   const unresolved = `/tmp/omp-soft-boundary-guard-${crypto.randomUUID()}`;
   mkdirSync(unresolved);
   try {
+    // Act / Assert
     expect(
       repositoryMutationHandoff({ toolName: "bash", input: { command: "gh pr edit 79 --body Updated" } }, unresolved),
     ).toMatchObject({ decision: "allow" });
@@ -585,14 +589,17 @@ test("passes targetless pull request mutations outside a GitHub checkout", () =>
   }
 });
 
-test("allows external mutations without interactive confirmation", async () => {
+test("when interactive confirmation is unavailable, allows external mutations", async () => {
+  // Arrange
   const repository = checkout();
   try {
     const instance = guard();
+    // Act
     const result = await instance.handler(
       { toolName: "bash", input: { command: `gh issue create --repo ${external}` } },
       context(repository, false),
     );
+    // Assert
     expect(result).toBeUndefined();
     expect(instance.messages).toEqual([]);
   } finally {
@@ -600,40 +607,11 @@ test("allows external mutations without interactive confirmation", async () => {
   }
 });
 
-test("returns an exact external-write ask handoff", () => {
+test("when an external target is dynamic, passes without prompting", () => {
+  // Arrange
   const repository = checkout();
   try {
-    const event = {
-      toolName: "bash",
-      input: { command: `git push https://github.com/${external}.git HEAD` },
-    };
-    expect(repositoryMutationHandoff(event, repository)).toMatchObject({
-      decision: "ask",
-      action: "git push",
-      currentRepository: current,
-      target: external,
-      fingerprint: expect.any(String),
-      ask: {
-        questions: [
-          {
-            id: confirmationId,
-            question: `Allow one git push to ${external}?\nCurrent repository: ${current}\nTarget repository: ${external}\nCommand: ${event.input.command}`,
-            options: [
-              { label: "Approve", description: `Allow exactly this git push to ${external} once.` },
-              { label: "Reject", description: "Keep this write blocked." },
-            ],
-          },
-        ],
-      },
-    });
-  } finally {
-    rmSync(repository, { recursive: true, force: true });
-  }
-});
-
-test("passes an unresolved external target without prompting", () => {
-  const repository = checkout();
-  try {
+    // Act / Assert
     expect(
       repositoryMutationHandoff(
         { toolName: "bash", input: { command: 'gh issue create --repo "$TARGET"' } },

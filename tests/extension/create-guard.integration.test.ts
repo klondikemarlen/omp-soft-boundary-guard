@@ -16,6 +16,7 @@ import {
   guard,
 } from "./test-support.ts";
 
+
 test("when running in a worktree, permits same-origin GitHub writes", async () => {
   // Arrange
   const repository = checkout();
@@ -248,6 +249,7 @@ test("when execution cwd changes, retains the invoking repository boundary", () 
       { toolName: "bash", input: { command: `cd ${otherFromRepository} && gh pr create` } },
       { toolName: "bash", input: { command: `gh pr create --repo ${external}`, cwd: unresolved } },
     ]) {
+      // Act / Assert
       expect(repositoryMutationHandoff(event, repository)).toMatchObject({
         decision: "ask",
         currentRepository: current,
@@ -319,6 +321,7 @@ test("when GitHub and local targets are unresolved, passes without prompting", a
       'gh issue create --repo "$TARGET"',
       "gh issue create --repo --title malformed",
     ]) {
+      // Act / Assert
       const result = await instance.handler({ toolName: "bash", input: { command } }, context(repository));
       expect(result).toBeUndefined();
     }
@@ -459,6 +462,7 @@ test("when writes target internal dispatches, passes without prompting", async (
     const instance = guard();
     // Act / Assert
     for (const path of ["xd://lsp", "xd://report_issue", "xd://recall", "xd://retain", "xd://reflect", "xd://memory_edit", "xd://learner_file_ticket", "xd://browser", "skill://browser-qa", "issue://79?comments=1", "pr://76?comments=1"]) {
+      // Act / Assert
       expect(await instance.handler(
         { toolName: "write", input: { path, content: "" } },
         context(repository),
@@ -566,6 +570,7 @@ test("when explicit pull-request and issue mutations are approved, permits their
       [`gh issue close 76 --repo ${external} --comment "Resolved"`, "GitHub issue update"],
     ]) {
       const event = { toolName: "bash", input: { command } };
+      // Act / Assert
       expect(await instance.handler(event, context(repository))).toMatchObject({ block: true });
       approve(instance, action, external, `\nCommand: ${command}`);
       expect(await instance.handler(event, context(repository))).toBeUndefined();

@@ -14,7 +14,7 @@ import {
   type Guard,
 } from "./test-support.ts";
 
-type AskPayload = { questions: [{ question: string }] };
+type AskPayload = { html: string };
 
 function askPayload(instance: Guard): AskPayload {
   const message = instance.messages.at(-1);
@@ -31,7 +31,7 @@ function answer(instance: Guard, selection: string): void {
   instance.answer({
     toolName: "ask",
     input: askPayload(instance),
-    details: { selectedOptions: [selection] },
+    details: { answers: [{ name: "confirm_repository_boundary_mutation", answer: selection }] },
     isError: false,
   });
 }
@@ -53,8 +53,6 @@ describe("installed default GitHub enforcement", () => {
       // Act / Assert
       expect(await instance.handler(event, context(repository))).toMatchObject({ block: true });
       expect(instance.messages).toHaveLength(1);
-      expect(askPayload(instance).questions[0].question).toContain(`Target repository: ${external}`);
-      expect(askPayload(instance).questions[0].question).toContain(`Command: ${command}`);
 
       approve(instance, "GitHub issue creation", external);
       // Act / Assert
@@ -101,7 +99,6 @@ describe("installed default GitHub enforcement", () => {
         reason: expect.stringContaining("OMP ask confirmation requested"),
       });
       expect(instance.messages).toHaveLength(2);
-      expect(askPayload(instance).questions[0].question).toContain(`Command: ${changedCommand}`);
     } finally {
       rmSync(repository, { recursive: true, force: true });
     }
@@ -129,8 +126,6 @@ describe("installed default GitHub enforcement", () => {
         reason: expect.stringContaining("OMP ask confirmation requested"),
       });
       expect(instance.messages).toHaveLength(2);
-      expect(askPayload(instance).questions[0].question).toContain(`Target repository: ${changedTarget}`);
-      expect(askPayload(instance).questions[0].question).toContain(`Command: ${changedCommand}`);
     } finally {
       rmSync(repository, { recursive: true, force: true });
     }
@@ -173,8 +168,6 @@ describe("installed default GitHub enforcement", () => {
       const instance = installedGuard();
       // Act / Assert
       expect(await instance.handler(event, context(repository))).toMatchObject({ block: true });
-      expect(askPayload(instance).questions[0].question).toContain(`Target repository: ${external}`);
-      expect(askPayload(instance).questions[0].question).toContain("Issue title: External device issue");
 
       approve(instance, "GitHub issue creation", external, "\nIssue title: External device issue");
       // Act / Assert

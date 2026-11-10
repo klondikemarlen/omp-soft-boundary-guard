@@ -75,11 +75,13 @@ export function approve(guard: Guard, _action: string, _target: string, _detail 
   if (!message) throw new Error("missing confirmation request");
   const start = message.indexOf("{");
   const end = message.indexOf("}. If approved", start) + 1;
-  const input = JSON.parse(message.slice(start, end)) as Record<string, unknown>;
+  const input = JSON.parse(message.slice(start, end)) as { html: string };
+  const name = /<input\b[^>]*\bname="([^"]+)"/.exec(input.html)?.[1];
+  if (!name) throw new Error("missing confirmation field");
   guard.answer({
     toolName: "ask",
     input,
-    details: { selectedOptions: ["Approve"] },
+    details: { answers: [{ name, answer: "Approve" }] },
     isError: false,
   });
 }

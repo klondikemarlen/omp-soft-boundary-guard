@@ -1,4 +1,5 @@
 import type { ToolInput } from "../extension/contract.ts";
+import { confirmationForm } from "./ask.ts";
 import { confirmationQuestionId } from "./confirmation-question.ts";
 
 export const externalConfirmationQuestionId = "confirm_external_github_write";
@@ -60,27 +61,33 @@ export function isEquivalentIssueCreationApproval(storedQuestion: string, expect
     /(?:--method(?:=|\s+)POST|-X\s+POST)(?:\s|$)/i.test(command);
 }
 
+export function confirmationAnswer(details: unknown, questionId: string): "Approve" | "Reject" | undefined {
+  if (
+    typeof details !== "object" ||
+    details === null ||
+    ("timedOut" in details && details.timedOut === true) ||
+    !("answers" in details) ||
+    !Array.isArray(details.answers) ||
+    details.answers.length !== 1
+  ) return undefined;
+
+  const answer = details.answers[0];
+  if (
+    typeof answer !== "object" ||
+    answer === null ||
+    !("name" in answer) ||
+    answer.name !== questionId ||
+    !("answer" in answer)
+  ) return undefined;
+  return answer.answer === "Approve" || answer.answer === "Reject" ? answer.answer : undefined;
+}
+
 export function isApprovedConfirmation(
   input: ToolInput,
   details: unknown,
   expectedQuestion: string,
   questionId = confirmationQuestionId,
 ): boolean {
-  const questions = input.questions;
-  if (!Array.isArray(questions) || questions.length !== 1) return false;
-
-  const question = questions[0];
-  return (
-    typeof question === "object" &&
-    question !== null &&
-    "id" in question &&
-    "question" in question &&
-    question.id === questionId &&
-    question.question === expectedQuestion &&
-    typeof details === "object" &&
-    details !== null &&
-    "selectedOptions" in details &&
-    Array.isArray(details.selectedOptions) &&
-    details.selectedOptions.includes("Approve")
-  );
+  return input.html === confirmationForm(expectedQuestion, questionId) &&
+    confirmationAnswer(details, questionId) === "Approve";
 }

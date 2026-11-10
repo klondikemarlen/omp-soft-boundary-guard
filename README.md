@@ -21,6 +21,27 @@ For recognized `xd://github` mutations that omit `repo`, the guard pins the tool
 
 Python recognition parses syntax without executing the supplied code or requiring a Python interpreter. It supports direct `subprocess.run` calls with a literal list of plain, unescaped string arguments, optional `input` supplied as a variable, and boolean `check`, `capture_output`, and `text` keywords. Aliases, dynamic argv, unsupported subprocess options, malformed code, and multiple recognized writes remain unresolved and fail open. Calls hidden inside Python strings or comments are not treated as executable writes.
 
+## Native Folder Approvals
+
+For fixed sensitive paths, independent of repository identity, OMP's native `tools.restrictedFolders` is the smaller solution: no plugin is needed for that folder-only requirement. The setting is documented in [OMP 18.13.1](https://github.com/can1357/oh-my-pi/blob/v18.13.1/docs/approval-mode.md#restricted-folders) and [18.18.7](https://github.com/can1357/oh-my-pi/blob/v18.18.7/docs/approval-mode.md#restricted-folders). This plugin's HTML Ask compatibility requirement still applies separately.
+
+Opt in through your OMP configuration, replacing the example path with the folder you want protected:
+
+```yaml
+tools:
+  restrictedFolders:
+    - ~/secrets
+```
+
+- Reported file targets inside that folder or its descendants require approval on every call, including in `yolo` or with `--auto-approve`. Remembered file, folder, and session grants do not bypass it; deny policies still deny.
+- Recursive searches rooted above a restricted folder prompt because they reach into it; a one-level listing of its parent does not.
+- Tools without reported file targets, including `bash` and `eval`, are matched by their `cwd` argument when available, otherwise the session cwd. Native folder matching does not parse command text: a command running outside `~/secrets` that names a file inside it is not covered by that cwd check. Use explicit per-tool prompt or deny policies when broader execution approval is needed.
+- A required prompt without an interactive UI is refused, including in headless subagents. This is approval policy, not filesystem, process, or network containment.
+
+Keep this plugin when approval must depend on the invoking repository and a resolved remote destination: native folder lists do not classify `gh` or `xd://github` writes to another GitHub repository. The plugin still permits one exact approved retry for recognized external GitHub writes, warns for other recognized external mutations, and fails open for unresolved operations and unavailable UI as described above. Native mandatory folder prompts and the plugin's soft-boundary decisions are separate checks; neither replaces the other.
+
+This project has no equivalent custom folder-only approval engine to remove. Remove such logic only where an actual duplicate is identified and equivalent coverage is demonstrated; do not replace repository classification with a folder list.
+
 ## Handoff inspection
 
 `bun run handoff` reads `{"event":{"toolName":…,"input":…},"cwd":"…"}` from standard input and writes one JSON packet. Its `decision` is `allow` or `ask`; an `ask` packet includes the exact OMP HTML-form Ask payload, confirmation question and field name, active repository, resolved mutation target, action, and exact-retry fingerprint.

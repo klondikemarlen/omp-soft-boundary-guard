@@ -3,6 +3,7 @@ import { confirmationForm } from "./ask.ts";
 import { confirmationQuestionId } from "./confirmation-question.ts";
 
 export const externalConfirmationQuestionId = "confirm_external_github_write";
+
 export function submittedConfirmationQuestion(input: ToolInput, questionId: string): string | undefined {
   const questions = input.questions;
   if (!Array.isArray(questions) || questions.length !== 1) return undefined;
@@ -33,6 +34,7 @@ export function approvedExternalQuestion(input: ToolInput, details: unknown): st
   ) return undefined;
   return question.question;
 }
+
 export function isApprovedExternalConfirmation(input: ToolInput, details: unknown, expectedQuestion: string): boolean {
   const question = approvedExternalQuestion(input, details);
   if (!question) return false;

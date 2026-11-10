@@ -44,7 +44,6 @@ export class AuthorizationState {
     this.#externalQuestion = undefined;
   }
 
-
   record(event: ToolResultEvent): void {
     if (event.toolName !== "ask") return;
 

@@ -14,20 +14,117 @@ function handoff(command: string) {
     stdin: new TextEncoder().encode(JSON.stringify({ event: { toolName: "bash", input: { command } } })),
     stdout: "pipe",
   });
-  expect(result.exitCode).toBe(0);
+  if (result.exitCode !== 0) {
+    throw new Error(`Handoff classifier exited with status ${result.exitCode}`);
+  }
   return JSON.parse(new TextDecoder().decode(result.stdout));
 }
 
-test("when a command mutates another repository, prints its approval decision", () => {
-  // Arrange: use the current checkout and an explicit external target.
-  // Act / Assert
-  expect(handoff("git push origin HEAD")).toMatchObject({ decision: "allow", target: current });
-  expect(handoff(`git push https://github.com/${external}.git HEAD`)).toMatchObject({
+test("when a push targets origin, allows the current checkout's repository", () => {
+  // Arrange
+  const command = "git push origin HEAD";
+
+  // Act
+  const decision = handoff(command);
+
+  // Assert
+  expect(decision).toMatchObject({ decision: "allow", target: current });
+});
+
+test("when a push targets an external repository, prints its approval form", () => {
+  // Arrange
+  const command = `git push https://github.com/${external}.git HEAD`;
+
+  // Act
+  const decision = handoff(command);
+
+  // Assert
+  expect(decision).toMatchObject({
     decision: "ask",
     target: external,
     questionId: "confirm_repository_boundary_mutation",
     ask: { html: expect.any(String) },
   });
-  expect(handoff('gh issue create --repo "$TARGET"')).toMatchObject({ decision: "allow" });
-  expect(handoff("git status --short")).toMatchObject({ decision: "allow" });
+});
+
+test("when an issue creation target is unresolved, fails open", () => {
+  // Arrange
+  const command = 'gh issue create --repo "$TARGET"';
+
+  // Act
+  const decision = handoff(command);
+
+  // Assert
+  expect(decision).toMatchObject({ decision: "allow" });
+});
+
+test("when a Git command only reads the worktree status, allows it", () => {
+  // Arrange
+  const command = "git status --short";
+
+  // Act
+  const decision = handoff(command);
+
+  // Assert
+  expect(decision).toMatchObject({ decision: "allow" });
+});
+
+test("when an issue comment reads quoted heredoc stdin containing Markdown, targets the current checkout", () => {
+  // Arrange
+  const command = [
+    "gh issue comment 354 --body-file - <<'COMMENT'",
+    "Run `/verifier` to check the result.",
+    "COMMENT",
+  ].join("\n");
+
+  // Act
+  const decision = handoff(command);
+
+  // Assert
+  expect(decision).toMatchObject({
+    decision: "allow",
+    action: "GitHub issue update",
+    currentRepository: current,
+    target: current,
+  });
+});
+
+test("when an issue comment is followed by a read-back, ignores the read-back's external repository option", () => {
+  // Arrange
+  const command = [
+    "gh issue comment 354 --body-file - <<'COMMENT'",
+    "Run `/verifier` to check the result.",
+    "COMMENT",
+    `gh issue view 354 --repo ${external} --json comments --jq '.comments[-1].body'`,
+  ].join("\n");
+
+  // Act
+  const decision = handoff(command);
+
+  // Assert
+  expect(decision).toMatchObject({ decision: "allow", target: current });
+});
+
+test.each([
+  ["an explicit repository option", `354 --repo '${external}'`],
+  ["an external issue URL", `https://github.com/${external}/issues/354`],
+])("when %s targets an external issue, asks despite the quoted heredoc", (_targetForm, targetArgument) => {
+  // Arrange
+  const command = [
+    `gh issue comment ${targetArgument} --body-file=- <<"COMMENT"`,
+    "Run `/verifier` to check the result.",
+    "COMMENT",
+  ].join("\n");
+
+  // Act
+  const decision = handoff(command);
+
+  // Assert
+  expect(decision).toMatchObject({
+    decision: "ask",
+    action: "GitHub issue update",
+    currentRepository: current,
+    target: external,
+    questionId: "confirm_repository_boundary_mutation",
+  });
 });

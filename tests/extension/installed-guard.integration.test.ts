@@ -211,6 +211,68 @@ describe("installed default GitHub enforcement", () => {
     });
   });
 
+  describe("external issue comments with quoted heredoc stdin", () => {
+    function comment(body: string) {
+      const command = [
+        `gh issue comment 354 --repo ${external} --body-file - <<'COMMENT'`,
+        body,
+        "COMMENT",
+        `gh issue view 354 --repo ${external} --comments`,
+      ].join("\n");
+      return { toolName: "bash", input: { command } };
+    }
+
+    test("when an external issue comment is approved, allows the exact heredoc once", async () => {
+      // Arrange
+      const instance = installedGuard();
+      const event = comment("Run `/verifier` to check the result.");
+      await instance.handler(event, context(repository));
+      answer(instance, "Approve");
+
+      // Act
+      const result = await instance.handler(event, context(repository));
+
+      // Assert
+      expect(result).toBeUndefined();
+    });
+
+    test("when the approved external issue comment is retried twice, requires another approval", async () => {
+      // Arrange
+      const instance = installedGuard();
+      const event = comment("Run `/verifier` to check the result.");
+      await instance.handler(event, context(repository));
+      answer(instance, "Approve");
+      await instance.handler(event, context(repository));
+
+      // Act
+      const result = await instance.handler(event, context(repository));
+
+      // Assert
+      expect(result).toMatchObject({
+        block: true,
+        reason: expect.stringContaining("OMP ask confirmation requested."),
+      });
+    });
+
+    test("when the approved external issue comment's heredoc body changes, requires a fresh approval", async () => {
+      // Arrange
+      const instance = installedGuard();
+      const original = comment("Run `/verifier` to check the result.");
+      const changed = comment("Run `/verifier` again to check the revised result.");
+      await instance.handler(original, context(repository));
+      answer(instance, "Approve");
+
+      // Act
+      const result = await instance.handler(changed, context(repository));
+
+      // Assert
+      expect(result).toMatchObject({
+        block: true,
+        reason: expect.stringContaining("OMP ask confirmation requested."),
+      });
+    });
+  });
+
   describe("external GitHub API writes", () => {
     const issue = {
       toolName: "bash",

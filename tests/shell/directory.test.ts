@@ -73,3 +73,26 @@ test("when a command changes directories, the change applies only to later comma
   // Assert
   expect(segments.map(({ cwd }) => cwd)).toEqual(["/session", "/tmp/external", "/tmp/external"]);
 });
+
+test("when a quoted issue comment heredoc ends, retains every subsequent shell segment", () => {
+  // Arrange
+  const command = [
+    "gh issue comment 354 --body-file - <<'COMMENT'",
+    "COMMENT is the delimiter only when it is alone on a line.",
+    "Run `/verifier`; don't add it to the command arguments.",
+    "COMMENT",
+    "gh issue view 354 --comments",
+    "cd /tmp/elsewhere && git status --short",
+  ].join("\n");
+
+  // Act
+  const segments = shellExecutionSegments({ command }, "/workspace");
+
+  // Assert
+  expect(segments).toEqual([
+    { words: ["gh", "issue", "comment", "354", "--body-file", "-"], cwd: "/workspace", nextOperator: ";" },
+    { words: ["gh", "issue", "view", "354", "--comments"], cwd: "/workspace", nextOperator: ";" },
+    { words: ["cd", "/tmp/elsewhere"], cwd: "/workspace", nextOperator: "&&" },
+    { words: ["git", "status", "--short"], cwd: "/tmp/elsewhere", nextOperator: undefined },
+  ]);
+});

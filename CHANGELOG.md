@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.1.9
+
+- Compound release commands now resolve each segment's explicit repository or execution checkout independently. A known external destination still produces an advisory warning, or a confirmation for the full command in strict mode.
+
 ## 2.1.8
 
 - A `gh issue comment` that reads a quoted heredoc with `--body-file -` no longer treats Markdown in its body as a repository. A subsequent read-back stays separate, and external comments still require approval for the exact submitted command.

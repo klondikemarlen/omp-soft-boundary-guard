@@ -192,3 +192,101 @@ test("when a nested shell changes checkout before release, resolves that target"
     rmSync(targetCheckout, { recursive: true, force: true });
   }
 });
+
+test("when an explicit owned release is followed by a nested release in another checkout, describes both destinations", () => {
+  // Arrange
+  const sessionCheckout = checkout(currentRepository);
+  const targetCheckout = checkout(externalRepository);
+  const command = `npm run release -- --repo ${currentRepository} && bash -c 'cd ${targetCheckout} && npm run release'`;
+
+  try {
+    // Act
+    const handoff = releaseHandoff({ toolName: "bash", input: { command } }, sessionCheckout);
+
+    // Assert
+    expect(handoff).toMatchObject({
+      decision: "ask",
+      category: "release",
+      target: `${currentRepository}, ${externalRepository}`,
+      question: expect.stringContaining(
+        `Release destinations in command order: ${currentRepository}; ${externalRepository}`,
+      ),
+    });
+  } finally {
+    rmSync(sessionCheckout, { recursive: true, force: true });
+    rmSync(targetCheckout, { recursive: true, force: true });
+  }
+});
+
+test("when releases name different repositories, describes each explicit destination", () => {
+  // Arrange
+  const repository = checkout(currentRepository);
+  const command = `release --repo ${currentRepository} && deploy --repo ${externalRepository}`;
+
+  try {
+    // Act
+    const handoff = releaseHandoff({ toolName: "bash", input: { command } }, repository);
+
+    // Assert
+    expect(handoff).toMatchObject({
+      decision: "ask",
+      target: `${currentRepository}, ${externalRepository}`,
+    });
+  } finally {
+    rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test("when a known external release is paired with an unresolved checkout, keeps the outside classification", () => {
+  // Arrange
+  const repository = checkout(currentRepository);
+  const command = `release --repo ${externalRepository} && cd "$CHECKOUT" && deploy`;
+
+  try {
+    // Act
+    const handoff = releaseHandoff({ toolName: "bash", input: { command } }, repository);
+
+    // Assert
+    expect(handoff).toMatchObject({
+      decision: "ask",
+      target: `${externalRepository}, unresolved destination`,
+    });
+  } finally {
+    rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test("when no checkout can be resolved for a release segment, does not classify the command as inside", () => {
+  // Arrange
+  const repository = checkout(currentRepository);
+  const command = `release --repo ${currentRepository} && cd "$CHECKOUT" && deploy`;
+
+  try {
+    // Act
+    const handoff = releaseHandoff({ toolName: "bash", input: { command } }, repository);
+
+    // Assert
+    expect(handoff).toEqual({ decision: "allow" });
+  } finally {
+    rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test("when an explicit release destination is unresolved, identifies the checkout as context only", () => {
+  // Arrange
+  const repository = checkout(currentRepository);
+  const command = 'release --repo "$TARGET"';
+
+  try {
+    // Act
+    const handoff = releaseHandoff({ toolName: "bash", input: { command } }, repository);
+
+    // Assert
+    expect(handoff).toMatchObject({
+      decision: "ask",
+      target: `unresolved destination (execution checkout: ${currentRepository})`,
+    });
+  } finally {
+    rmSync(repository, { recursive: true, force: true });
+  }
+});

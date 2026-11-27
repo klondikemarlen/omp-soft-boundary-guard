@@ -16,9 +16,15 @@ export function confirmationQuestion(
   if (category === "release") {
     const details = [
       `Repository: ${currentRepository ?? target}`,
+      description,
       typeof input.command === "string" ? `Command: ${input.command}` : undefined,
     ].filter((detail): detail is string => Boolean(detail));
-    return `Allow one release/deploy action in ${target}?${details.map((detail) => `\n${detail}`).join("")}`;
+    let question = `Allow one release/deploy action in ${target}?`;
+    if (description !== undefined) {
+      question = `Allow release/deploy for the command targeting ${target}?`;
+    }
+
+    return `${question}${details.map((detail) => `\n${detail}`).join("")}`;
   }
   const details = [
     local ? `Target path(s): ${target}` : `Current repository: ${currentRepository ?? "unresolved"}`,

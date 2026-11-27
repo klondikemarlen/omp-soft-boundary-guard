@@ -563,7 +563,6 @@ test("when the confirmation is explicitly rejected, keeps the retry blocked", as
 test("when the confirmation is explicitly rejected, does not issue a second prompt on retry", async () => {
   // Arrange
   const repository = checkout();
-  const instance = guard();
   const event = { toolName: "bash", input: { command: `gh issue create --repo ${external} --title "Explicit rejection"` } };
   try {
     const instance = guard();

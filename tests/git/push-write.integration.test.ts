@@ -6,7 +6,7 @@ import { join, relative } from "node:path";
 import { expect, test } from "bun:test";
 
 import { repositoryMutationHandoff } from "../../index.ts";
-import { approve, checkout, context, external, guard } from "../extension/test-support.ts";
+import { answerConfirmation, approve, checkout, context, external, guard } from "../extension/test-support.ts";
 
 test("when pushing to the same origin, allows the push", async () => {
   // Arrange
@@ -91,19 +91,19 @@ test("when an external push is approved, allows one retry", async () => {
   }
 });
 
-test("when a default push remote is configured, resolves its destination", async () => {
+test("when a default push remote is configured, asks about its destination", () => {
   // Arrange
   const repository = checkout();
   try {
     execFileSync("git", ["-C", repository, "remote", "add", "upstream", `https://github.com/${external}.git`]);
     execFileSync("git", ["-C", repository, "config", "remote.pushDefault", "upstream"]);
     // Act
-    const result = await guard().handler(
+    const result = repositoryMutationHandoff(
       { toolName: "bash", input: { command: "git push" } },
-      context(repository),
+      repository,
     );
     // Assert
-    expect(result).toMatchObject({ block: true });
+    expect(result).toMatchObject({ decision: "ask", target: external });
   } finally {
     rmSync(repository, { recursive: true, force: true });
   }
@@ -251,25 +251,31 @@ test("when an approved push is retried twice, consumes approval once", async () 
   }
 });
 
-test("when the default push remote changes, requires fresh approval", async () => {
+test("when the default push destination changes, requires fresh approval for the same command", async () => {
   // Arrange
   const repository = checkout();
   const changed = "elsewhere/changed";
   try {
-
     execFileSync("git", ["-C", repository, "remote", "add", "deploy", `https://github.com/${external}.git`]);
     execFileSync("git", ["-C", repository, "config", "remote.pushDefault", "deploy"]);
     const instance = guard();
     const event = { toolName: "bash", input: { command: "git push" } };
-    // Act / Assert
-    expect(await instance.handler(event, context(repository))).toMatchObject({ block: true });
+    const session = context(repository);
+    const originalRequest = await instance.handler(event, session);
+    answerConfirmation(instance, "Approve");
 
-    approve(instance, "git push", external, "\nCommand: git push");
+    // Act: retry after changing the remote URL, then approve the new request.
     execFileSync("git", ["-C", repository, "remote", "set-url", "deploy", `https://github.com/${changed}.git`]);
-    // Act / Assert
-    expect(await instance.handler(event, context(repository))).toMatchObject({ block: true });
+    const changedRequest = await instance.handler(event, session);
+    answerConfirmation(instance, "Approve");
+    const approvedRetry = await instance.handler(event, session);
+
     // Assert
-    expect(instance.messages.at(-1)).toContain(changed);
+    expect([originalRequest, changedRequest, approvedRetry]).toEqual([
+      expect.objectContaining({ block: true }),
+      expect.objectContaining({ block: true }),
+      undefined,
+    ]);
   } finally {
     rmSync(repository, { recursive: true, force: true });
   }
@@ -296,23 +302,30 @@ test("when a push moves to another session directory, requires approval", async 
   }
 });
 
-test("when an allowed call runs in a sibling checkout, retains no approval", async () => {
+test("when an allowed call visits a sibling checkout, invalidates approval in the original checkout", async () => {
   // Arrange
   const repository = checkout();
   const sibling = checkout();
   try {
-
     const instance = guard();
     const event = { toolName: "bash", input: { command: `git push https://github.com/${external}.git HEAD` } };
-    // Act
-    await instance.handler(event, context(repository));
-    approve(instance, "git push", external, `\nCommand: ${event.input.command}`);
-    // Act / Assert
+    const session = context(repository);
+    const initialRequest = await instance.handler(event, session);
+    answerConfirmation(instance, "Approve");
 
-    expect(await instance.handler({ toolName: "bash", input: { command: "git status --short" } }, context(sibling))).toBeUndefined();
-    // Act / Assert
-    expect(await instance.handler(event, context(sibling))).toMatchObject({ block: true });
+    // Act: visit the sibling without asking for another approval, then return.
+    const siblingStatus = await instance.handler(
+      { toolName: "bash", input: { command: "git status --short" } },
+      context(sibling),
+    );
+    const retry = await instance.handler(event, session);
 
+    // Assert
+    expect([initialRequest, siblingStatus, retry]).toEqual([
+      expect.objectContaining({ block: true }),
+      undefined,
+      expect.objectContaining({ block: true }),
+    ]);
   } finally {
     rmSync(sibling, { recursive: true, force: true });
     rmSync(repository, { recursive: true, force: true });
@@ -368,19 +381,23 @@ test("when a push specifies a relative tool cwd, resolves origin in that checkou
   const repository = checkout();
   const destinationCheckout = checkout(`https://github.com/${external}.git`);
   try {
-    const event = {
-      toolName: "bash",
-      input: { command: "git push origin HEAD", cwd: relative(repository, destinationCheckout) },
-    };
+    const command = "git push origin HEAD";
+    const event = { toolName: "bash", input: { command } };
+    const relativeCwdEvent = { ...event, input: { command, cwd: relative(repository, destinationCheckout) } };
 
-    // Act / Assert
-    expect(repositoryMutationHandoff(event, repository)).toMatchObject({
-      decision: "ask",
-      action: "git push",
-      target: external,
-    });
-    expect(repositoryMutationHandoff({ ...event, input: { command: event.input.command } }, repository))
-      .toMatchObject({ decision: "allow" });
+    // Act
+    const withCwd = repositoryMutationHandoff(relativeCwdEvent, repository);
+    const withoutCwd = repositoryMutationHandoff(event, repository);
+
+    // Assert
+    expect([withCwd, withoutCwd]).toEqual([
+      expect.objectContaining({
+        decision: "ask",
+        action: "git push",
+        target: external,
+      }),
+      expect.objectContaining({ decision: "allow" }),
+    ]);
   } finally {
     rmSync(destinationCheckout, { recursive: true, force: true });
     rmSync(repository, { recursive: true, force: true });

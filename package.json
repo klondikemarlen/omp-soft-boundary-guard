@@ -1,6 +1,6 @@
 {
   "name": "omp-soft-boundary-guard",
-  "version": "2.1.15",
+  "version": "2.1.16",
   "description": "OMP soft boundary guard with one-shot approval for recognized external GitHub writes and advisory warnings for other mutations.",
   "type": "module",
   "scripts": {

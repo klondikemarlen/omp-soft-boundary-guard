@@ -8,6 +8,7 @@ import {
   type ExtensionAPI,
   type ToolCallHandler,
 } from "../../index.ts";
+import type { AskPayload } from "../../guard/ask.ts";
 
 export const current = "klondikemarlen/omp-soft-boundary-guard";
 export const external = "elsewhere/example";
@@ -70,16 +71,18 @@ export function context(cwd: string, hasUI = true) {
   return { cwd, hasUI };
 }
 
-export function approve(guard: Guard, _action: string, _target: string, _detail = "") {
-  answerConfirmation(guard, "Approve");
+export function requestedAsk(message: string | undefined): AskPayload {
+  if (!message) {
+    throw new Error("missing confirmation request");
+  }
+
+  const start = message.indexOf("{");
+  const end = message.lastIndexOf("}. If approved, retry exactly the blocked ") + 1;
+  return JSON.parse(message.slice(start, end)) as AskPayload;
 }
 
 export function answerConfirmation(guard: Guard, answer: "Approve" | "Reject"): void {
-  const message = guard.messages.at(-1);
-  if (!message) throw new Error("missing confirmation request");
-  const start = message.indexOf("{");
-  const end = message.indexOf("}. If approved", start) + 1;
-  const input = JSON.parse(message.slice(start, end)) as { html: string };
+  const input = requestedAsk(guard.messages.at(-1));
   const name = /<input\b[^>]*\bname="([^"]+)"/.exec(input.html)?.[1];
   if (!name) throw new Error("missing confirmation field");
   guard.answer({

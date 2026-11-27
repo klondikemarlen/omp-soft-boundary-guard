@@ -12,24 +12,12 @@ import {
   current,
   external,
   installedGuard,
+  requestedAsk,
   type Guard,
 } from "./test-support.ts";
 
-type AskPayload = { html: string };
-
-function askPayload(instance: Guard): AskPayload {
-  const message = instance.messages.at(-1);
-  if (!message) {
-    throw new Error("missing confirmation request");
-  }
-
-  const start = message.indexOf("{");
-  const end = message.indexOf("}. If approved", start) + 1;
-  return JSON.parse(message.slice(start, end)) as AskPayload;
-}
-
 function answer(instance: Guard, selection: "Approve" | "Reject"): void {
-  const input = askPayload(instance);
+  const input = requestedAsk(instance.messages.at(-1));
   instance.answer({
     toolName: "ask",
     input,
@@ -118,10 +106,10 @@ describe("installed default GitHub enforcement", () => {
       await instance.handler(event, context(repository));
 
       // Assert
-      expect(askPayload(instance).html).toContain(`Current repository: ${current}\nTarget repository: ${upstream}`);
+      expect(requestedAsk(instance.messages.at(-1)).html).toContain(`Current repository: ${current}\nTarget repository: ${upstream}`);
     });
 
-    test("when the revised upstream Python issue is declined, keeps the exact retry blocked without requesting approval again", async () => {
+    test("when the revised upstream Python issue is declined, keeps the exact retry blocked", async () => {
       // Arrange
       const instance = installedGuard();
       const original = pythonIssue("Original body");
@@ -136,6 +124,23 @@ describe("installed default GitHub enforcement", () => {
         block: true,
         reason: expect.stringContaining("The previous confirmation was not approved; no duplicate confirmation was requested."),
       });
+    });
+
+    test("when the revised upstream Python issue is declined, does not resend the confirmation on retry", async () => {
+      // Arrange
+      const instance = installedGuard();
+      const original = pythonIssue("Original body");
+      const revised = pythonIssue("Changed body");
+      await instance.handler(original, context(repository));
+      answer(instance, "Approve");
+      await instance.handler(revised, context(repository));
+      answer(instance, "Reject");
+
+      // Act
+      await instance.handler(revised, context(repository));
+
+      // Assert
+      expect(instance.messages).toHaveLength(2);
     });
 
     test("when the upstream Python issue is approved, allows the exact heredoc retry", async () => {
@@ -191,7 +196,7 @@ describe("installed default GitHub enforcement", () => {
       await instance.handler(changed, context(repository));
 
       // Assert
-      expect(askPayload(instance).html).toContain(`Command: ${Bun.escapeHTML(changed.input.command)}`);
+      expect(requestedAsk(instance.messages.at(-1)).html).toContain(`Command: ${Bun.escapeHTML(changed.input.command)}`);
     });
 
     test("when gh issue create omits --repo and gh defaults to upstream, blocks the implicit external destination", async () => {

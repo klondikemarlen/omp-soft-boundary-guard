@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.1.15
+
+- After a supported quoted issue-comment heredoc, the guard no longer infers a release directory through unsupported shell control flow. It still recognizes destinations that are explicit and do not depend on that directory.
+
 ## 2.1.14
 
 - Push decisions include every resolved repository configured for the selected remote, in push order. Git config classification distinguishes operation flags from values and paths.

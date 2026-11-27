@@ -1,12 +1,12 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 
 import { expect, test } from "bun:test";
 
 import { repositoryMutationHandoff } from "../../index.ts";
-import { answerConfirmation, checkout, context, external, guard } from "../extension/test-support.ts";
+import { answerConfirmation, checkout, context, external, guard, requestedAsk } from "../extension/test-support.ts";
 
 test("when pushing to the same origin, allows the push", async () => {
   // Arrange
@@ -72,16 +72,15 @@ test("when pushing to an external repository, asks for approval", async () => {
   }
 });
 
-test("when an external push is approved, allows one retry", async () => {
+test("when an external push is approved, allows the exact retry", async () => {
   // Arrange
   const repository = checkout();
   try {
-
     const instance = guard();
     const event = { toolName: "bash", input: { command: `git push https://github.com/${external}.git HEAD` } };
-    // Act
     await instance.handler(event, context(repository));
     answerConfirmation(instance, "Approve");
+
     // Act
     const result = await instance.handler(event, context(repository));
     // Assert
@@ -91,19 +90,19 @@ test("when an external push is approved, allows one retry", async () => {
   }
 });
 
-test("when a default push remote is configured, resolves its destination", async () => {
+test("when a default push remote is configured, asks about its destination", () => {
   // Arrange
   const repository = checkout();
   try {
     execFileSync("git", ["-C", repository, "remote", "add", "upstream", `https://github.com/${external}.git`]);
     execFileSync("git", ["-C", repository, "config", "remote.pushDefault", "upstream"]);
     // Act
-    const result = await guard().handler(
+    const result = repositoryMutationHandoff(
       { toolName: "bash", input: { command: "git push" } },
-      context(repository),
+      repository,
     );
     // Assert
-    expect(result).toMatchObject({ block: true });
+    expect(result).toMatchObject({ decision: "ask", target: external });
   } finally {
     rmSync(repository, { recursive: true, force: true });
   }
@@ -151,13 +150,12 @@ test("when an external push changes, requires new approval", async () => {
   // Arrange
   const repository = checkout();
   try {
-
     const instance = guard();
     const original = { toolName: "bash", input: { command: `git push https://github.com/${external}.git HEAD` } };
     const changed = { toolName: "bash", input: { command: `git push --force https://github.com/${external}.git HEAD` } };
-    // Act
     await instance.handler(original, context(repository));
     answerConfirmation(instance, "Approve");
+
     // Act
     const result = await instance.handler(changed, context(repository));
     // Assert
@@ -235,39 +233,71 @@ test("when an approved push is retried twice, consumes approval once", async () 
   // Arrange
   const repository = checkout();
   try {
-
     const instance = guard();
     const event = { toolName: "bash", input: { command: `git push https://github.com/${external}.git HEAD` } };
-    // Act
     await instance.handler(event, context(repository));
     answerConfirmation(instance, "Approve");
+
     // Act
-    await instance.handler(event, context(repository));
-    const result = await instance.handler(event, context(repository));
+    const approvedRetry = await instance.handler(event, context(repository));
+    const subsequentRetry = await instance.handler(event, context(repository));
+
     // Assert
-    expect(result).toMatchObject({ block: true });
+    expect([approvedRetry, subsequentRetry]).toEqual([
+      undefined,
+      expect.objectContaining({ block: true }),
+    ]);
   } finally {
     rmSync(repository, { recursive: true, force: true });
   }
 });
 
-test("when the default push remote changes, requires fresh approval", async () => {
+test("when the default push destination changes, requires fresh approval for the same command", async () => {
   // Arrange
   const repository = checkout();
   const changed = "elsewhere/changed";
   try {
-
     execFileSync("git", ["-C", repository, "remote", "add", "deploy", `https://github.com/${external}.git`]);
     execFileSync("git", ["-C", repository, "config", "remote.pushDefault", "deploy"]);
     const instance = guard();
     const event = { toolName: "bash", input: { command: "git push" } };
-    // Act / Assert
-    expect(await instance.handler(event, context(repository))).toMatchObject({ block: true });
+    const session = context(repository);
+    const originalRequest = await instance.handler(event, session);
+    answerConfirmation(instance, "Approve");
 
+    // Act
+    execFileSync("git", ["-C", repository, "remote", "set-url", "deploy", `https://github.com/${changed}.git`]);
+    const changedRequest = await instance.handler(event, session);
+    answerConfirmation(instance, "Approve");
+    const approvedRetry = await instance.handler(event, session);
+
+    // Assert
+    expect([originalRequest, changedRequest, approvedRetry]).toEqual([
+      expect.objectContaining({ block: true }),
+      expect.objectContaining({ block: true }),
+      undefined,
+    ]);
+  } finally {
+    rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test("when the default push remote changes after approval, names the new target in the confirmation", async () => {
+  // Arrange
+  const repository = checkout();
+  const changed = "elsewhere/changed";
+  try {
+    execFileSync("git", ["-C", repository, "remote", "add", "deploy", `https://github.com/${external}.git`]);
+    execFileSync("git", ["-C", repository, "config", "remote.pushDefault", "deploy"]);
+    const instance = guard();
+    const event = { toolName: "bash", input: { command: "git push" } };
+    await instance.handler(event, context(repository));
     answerConfirmation(instance, "Approve");
     execFileSync("git", ["-C", repository, "remote", "set-url", "deploy", `https://github.com/${changed}.git`]);
-    // Act / Assert
-    expect(await instance.handler(event, context(repository))).toMatchObject({ block: true });
+
+    // Act
+    await instance.handler(event, context(repository));
+
     // Assert
     expect(instance.messages.at(-1)).toContain(changed);
   } finally {
@@ -280,12 +310,11 @@ test("when a push moves to another session directory, requires approval", async 
   const repository = checkout();
   const sibling = checkout();
   try {
-
     const instance = guard();
     const event = { toolName: "bash", input: { command: `git push https://github.com/${external}.git HEAD` } };
-    // Act
     await instance.handler(event, context(repository));
     answerConfirmation(instance, "Approve");
+
     // Act
     const result = await instance.handler(event, context(sibling));
     // Assert
@@ -296,43 +325,57 @@ test("when a push moves to another session directory, requires approval", async 
   }
 });
 
-test("when an allowed call runs in a sibling checkout, retains no approval", async () => {
+test("when an allowed call visits a sibling checkout, invalidates approval in the original checkout", async () => {
   // Arrange
   const repository = checkout();
   const sibling = checkout();
   try {
-
     const instance = guard();
     const event = { toolName: "bash", input: { command: `git push https://github.com/${external}.git HEAD` } };
-    // Act
-    await instance.handler(event, context(repository));
+    const session = context(repository);
+    const initialRequest = await instance.handler(event, session);
     answerConfirmation(instance, "Approve");
-    // Act / Assert
 
-    expect(await instance.handler({ toolName: "bash", input: { command: "git status --short" } }, context(sibling))).toBeUndefined();
-    // Act / Assert
-    expect(await instance.handler(event, context(sibling))).toMatchObject({ block: true });
+    // Act
+    const siblingStatus = await instance.handler(
+      { toolName: "bash", input: { command: "git status --short" } },
+      context(sibling),
+    );
+    const retry = await instance.handler(event, session);
 
+    // Assert
+    expect([initialRequest, siblingStatus, retry]).toEqual([
+      expect.objectContaining({ block: true }),
+      undefined,
+      expect.objectContaining({ block: true }),
+    ]);
   } finally {
     rmSync(sibling, { recursive: true, force: true });
     rmSync(repository, { recursive: true, force: true });
   }
 });
 
-test("when approval is interrupted, prompts again", async () => {
+test("when an external push's confirmation is interrupted, blocks the retry and requests confirmation again", async () => {
   // Arrange
   const repository = checkout();
   try {
-
     const instance = guard();
     const event = { toolName: "bash", input: { command: `git push https://github.com/${external}.git HEAD` } };
-    // Act
     await instance.handler(event, context(repository));
+    instance.answer({
+      toolName: "ask",
+      input: requestedAsk(instance.messages.at(-1)),
+      details: {},
+      isError: true,
+    });
+
     // Act
-    instance.answer({ toolName: "ask", input: { questions: [] }, details: {}, isError: false });
     const result = await instance.handler(event, context(repository));
     // Assert
-    expect(result).toMatchObject({ block: true });
+    expect(result).toMatchObject({
+      block: true,
+      reason: expect.stringContaining("OMP ask confirmation requested."),
+    });
   } finally {
     rmSync(repository, { recursive: true, force: true });
   }
@@ -343,13 +386,12 @@ test("when a prior command switches checkouts, retains no checkout state", async
   const repository = checkout();
   const otherCheckout = checkout(`git@github.com:${external}.git`);
   try {
-
     const instance = guard();
-    // Act
     await instance.handler(
       { toolName: "bash", input: { command: `cd ${relative(repository, otherCheckout)} && git status --short` } },
       context(repository),
     );
+
     // Act
     const result = await instance.handler(
       { toolName: "bash", input: { command: `git push git@github.com:${external}.git HEAD` } },
@@ -363,31 +405,29 @@ test("when a prior command switches checkouts, retains no checkout state", async
   }
 });
 
-test("when tool directories are relative, resolves them from the session checkout", async () => {
-  // Arrange
+test("when a push specifies a relative tool cwd, resolves origin in that checkout", () => {
+  // Arrange: the same remote name points at different repositories in the two checkouts.
   const repository = checkout();
+  const destinationCheckout = checkout(`https://github.com/${external}.git`);
   try {
+    const command = "git push origin HEAD";
+    const event = { toolName: "bash", input: { command } };
+    const relativeCwdEvent = { ...event, input: { command, cwd: relative(repository, destinationCheckout) } };
 
-    mkdirSync(`${repository}/web`);
-    mkdirSync(`${repository}/api`);
-    const instance = guard();
     // Act
-    await instance.handler(
-      { toolName: "bash", input: { command: "git status --short", cwd: "web" } },
-      context(repository),
-    );
-    await instance.handler(
-      { toolName: "bash", input: { command: "git status --short", cwd: "api" } },
-      context(repository),
-    );
-    // Act
-    const result = await instance.handler(
-      { toolName: "bash", input: { command: "git push origin HEAD" } },
-      context(repository),
-    );
+    const withCwd = repositoryMutationHandoff(relativeCwdEvent, repository);
+    const withoutCwd = repositoryMutationHandoff(event, repository);
     // Assert
-    expect(result).toBeUndefined();
+    expect([withCwd, withoutCwd]).toEqual([
+      expect.objectContaining({
+        decision: "ask",
+        action: "git push",
+        target: external,
+      }),
+      expect.objectContaining({ decision: "allow" }),
+    ]);
   } finally {
+    rmSync(destinationCheckout, { recursive: true, force: true });
     rmSync(repository, { recursive: true, force: true });
   }
 });
@@ -398,11 +438,14 @@ test("when Git -C quotes an external checkout, resolves its target", async () =>
   const directory = mkdtempSync(join(tmpdir(), "omp-guard quoted checkout "));
   const targetCheckout = checkout(`https://github.com/${external}.git`, directory);
   try {
-    // Act / Assert
-    expect(await guard().handler({
-      toolName: "bash",
-      input: { command: `git -c user.name=Guard --no-pager -C "${targetCheckout}" push origin HEAD` },
-    }, context(repository))).toMatchObject({ block: true });
+    // Act
+    const result = await guard().handler(
+      { toolName: "bash", input: { command: `git -c user.name=Guard --no-pager -C "${targetCheckout}" push origin HEAD` } },
+      context(repository),
+    );
+
+    // Assert
+    expect(result).toMatchObject({ block: true });
   } finally {
     rmSync(repository, { recursive: true, force: true });
     rmSync(directory, { recursive: true, force: true });

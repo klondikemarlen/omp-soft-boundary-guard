@@ -8,16 +8,41 @@ import { answerConfirmation, checkout, context, external, guard, requestedAsk, t
 
 import { repositoryMutationHandoff } from "../../guard/handoff.ts";
 
-test("when confirmation is pending, does not reissue it", async () => {
+test("when confirmation is pending, keeps the identical invocation blocked", async () => {
   // Arrange
   const repository = checkout();
   try {
     const instance = guard();
     const event = { toolName: "bash", input: { command: `gh issue create --repo ${external} --title "Pending"` } };
-    // Act / Assert
     await instance.handler(event, context(repository));
+
+    // Act
     const result = await instance.handler(event, context(repository));
-    expect(result).toMatchObject({ reason: expect.stringContaining("confirmation is already pending") });
+
+    // Assert
+    expect(result).toMatchObject({
+      block: true,
+      reason: expect.stringContaining("confirmation is already pending"),
+    });
+  } finally {
+    rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test("when an invocation is retried while confirmation is pending, does not send another prompt", async () => {
+  // Arrange
+  const repository = checkout();
+  try {
+    const instance = guard();
+    const event = { toolName: "bash", input: { command: `gh issue create --repo ${external} --title "Pending"` } };
+    await instance.handler(event, context(repository));
+    const originalPrompt = instance.messages[0];
+
+    // Act
+    await instance.handler(event, context(repository));
+
+    // Assert
+    expect(instance.messages).toEqual([originalPrompt]);
   } finally {
     rmSync(repository, { recursive: true, force: true });
   }
@@ -30,9 +55,11 @@ test("when another HTML form is approved, leaves the original confirmation pendi
   try {
     const instance = guard();
     await instance.handler(event, context(repository));
-    // Act
     instance.answer(nativeAskApproval);
+
+    // Act
     const retry = await instance.handler(event, context(repository));
+
     // Assert
     expect(retry).toMatchObject({
       block: true,
@@ -51,9 +78,9 @@ test("when another HTML form is approved, does not reissue the original prompt",
   try {
     await instance.handler(event, context(repository));
     const originalPrompt = instance.messages[0];
+    instance.answer(nativeAskApproval);
 
     // Act
-    instance.answer(nativeAskApproval);
     await instance.handler(event, context(repository));
 
     // Assert
@@ -142,22 +169,14 @@ test("when an external GitHub gate already approved, permits its matching retry"
   try {
     const instance = guard();
     const event = { toolName: "bash", input: { command: `gh issue create --repo ${external} --title "Approved externally" --body "Original"` } };
-    // Act / Assert
     await instance.handler(event, context(repository));
-    instance.answer({
-      toolName: "ask",
-      input: {
-        questions: [{
-          id: "confirm_external_github_write",
-          question: `Allow one GitHub issue creation to ${external}?\nIssue title: Approved externally\nBody: Original\nCommand: gh issue create --repo ${external} --title "Approved externally" --body "Original"`,
-        }],
-      },
-      details: { selectedOptions: ["Approve"] },
-      isError: false,
-    });
-    const retry = { toolName: "bash", input: { command: `gh issue create --repo ${external} --title "Approved externally" --body "Original"` } };
-    const result = await instance.handler(retry, context(repository));
-    expect(result).toBeUndefined();
+    recordExternalApproval(
+      instance,
+      `Allow one GitHub issue creation to ${external}?\nIssue title: Approved externally\nBody: Original\nCommand: ${event.input.command}`,
+    );
+
+    // Act / Assert
+    expect(await instance.handler(event, context(repository))).toBeUndefined();
   } finally {
     rmSync(repository, { recursive: true, force: true });
   }
@@ -204,15 +223,9 @@ test("when an API issue creation is equivalent, reuses external issue approval",
   const command = `gh api repos/${external}/issues --method POST -f title="Approved" -f body="Body"`;
   try {
     const instance = guard();
+    recordExternalApproval(instance, `Allow one GitHub issue creation in ${external}?`);
+
     // Act / Assert
-    instance.answer({
-      toolName: "ask",
-      input: {
-        questions: [{ id: "confirm_external_github_write", question: `Allow one GitHub issue creation in ${external}?` }],
-      },
-      details: { selectedOptions: ["Approve"] },
-      isError: false,
-    });
     expect(await instance.handler({ toolName: "bash", input: { command } }, context(repository))).toBeUndefined();
   } finally {
     rmSync(repository, { recursive: true, force: true });
@@ -281,19 +294,16 @@ test("when API fields change, does not reuse detailed external approval", async 
   const command = `gh api repos/${external}/issues --method POST -f title="Changed" -f body="Changed"`;
   try {
     const instance = guard();
+    recordExternalApproval(
+      instance,
+      `Allow one GitHub issue creation in ${external}?\nIssue title: Original\nBody: Original`,
+    );
+
     // Act / Assert
-    instance.answer({
-      toolName: "ask",
-      input: {
-        questions: [{
-          id: "confirm_external_github_write",
-          question: `Allow one GitHub issue creation in ${external}?\nIssue title: Original\nBody: Original`,
-        }],
-      },
-      details: { selectedOptions: ["Approve"] },
-      isError: false,
+    expect(await instance.handler({ toolName: "bash", input: { command } }, context(repository))).toMatchObject({
+      block: true,
+      reason: expect.stringContaining("OMP ask confirmation requested"),
     });
-    expect(await instance.handler({ toolName: "bash", input: { command } }, context(repository))).toMatchObject({ block: true });
   } finally {
     rmSync(repository, { recursive: true, force: true });
   }
@@ -305,12 +315,12 @@ test("when only intent changes, permits the approved write retry", async () => {
   try {
     const instance = guard();
     const event = { toolName: "write", input: { i: "create issue", path: "xd://github", content: JSON.stringify({ op: "issue_create", repo: external, title: "Intent-independent issue" }) } };
-    // Act / Assert
+    const retry = { toolName: "write", input: { ...event.input, i: "retry approved issue" } };
     await instance.handler(event, context(repository));
     answerConfirmation(instance, "Approve");
-    const retry = { toolName: "write", input: { ...event.input, i: "retry approved issue" } };
-    const result = await instance.handler(retry, context(repository));
-    expect(result).toBeUndefined();
+
+    // Act / Assert
+    expect(await instance.handler(retry, context(repository))).toBeUndefined();
   } finally {
     rmSync(repository, { recursive: true, force: true });
   }
@@ -360,12 +370,15 @@ test("when an approved payload changes, rejects the retry", async () => {
   try {
     const instance = guard();
     const original = { toolName: "write", input: { i: "create issue", path: "xd://github", content: JSON.stringify({ op: "issue_create", repo: external, title: "Original issue" }) } };
-    // Act / Assert
+    const changed = { toolName: "write", input: { ...original.input, content: JSON.stringify({ op: "issue_create", repo: external, title: "Changed issue" }) } };
     await instance.handler(original, context(repository));
     answerConfirmation(instance, "Approve");
-    const changed = { toolName: "write", input: { ...original.input, i: "retry changed issue", content: JSON.stringify({ op: "issue_create", repo: external, title: "Changed issue" }) } };
-    const result = await instance.handler(changed, context(repository));
-    expect(result).toMatchObject({ reason: expect.stringContaining("does not match this exact retry") });
+
+    // Act / Assert
+    expect(await instance.handler(changed, context(repository))).toMatchObject({
+      block: true,
+      reason: expect.stringContaining("does not match this exact retry"),
+    });
   } finally {
     rmSync(repository, { recursive: true, force: true });
   }
@@ -377,12 +390,15 @@ test("when an approved destination changes, rejects the retry", async () => {
   try {
     const instance = guard();
     const original = { toolName: "write", input: { i: "create issue", path: "xd://github", content: JSON.stringify({ op: "issue_create", repo: external, title: "Repository-bound issue" }) } };
-    // Act / Assert
+    const changed = { toolName: "write", input: { ...original.input, content: JSON.stringify({ op: "issue_create", repo: "elsewhere/other-example", title: "Repository-bound issue" }) } };
     await instance.handler(original, context(repository));
     answerConfirmation(instance, "Approve");
-    const changed = { toolName: "write", input: { ...original.input, i: "retry another repository", content: JSON.stringify({ op: "issue_create", repo: "elsewhere/other-example", title: "Repository-bound issue" }) } };
-    const result = await instance.handler(changed, context(repository));
-    expect(result).toMatchObject({ reason: expect.stringContaining("does not match this exact retry") });
+
+    // Act / Assert
+    expect(await instance.handler(changed, context(repository))).toMatchObject({
+      block: true,
+      reason: expect.stringContaining("does not match this exact retry"),
+    });
   } finally {
     rmSync(repository, { recursive: true, force: true });
   }
@@ -532,8 +548,7 @@ test("when the confirmation is explicitly rejected, keeps the retry blocked", as
   try {
     const instance = guard();
     await instance.handler(event, context(repository));
-    const ask = requestedAsk(instance.messages[0]);
-    instance.answer({ toolName: "ask", input: ask, details: { answers: [{ name: "confirm_repository_boundary_mutation", answer: "Reject" }] }, isError: false });
+    answerConfirmation(instance, "Reject");
 
     // Act / Assert
     expect(await instance.handler(event, context(repository))).toMatchObject({
@@ -551,10 +566,10 @@ test("when the confirmation is explicitly rejected, does not issue a second prom
   const instance = guard();
   const event = { toolName: "bash", input: { command: `gh issue create --repo ${external} --title "Explicit rejection"` } };
   try {
+    const instance = guard();
     await instance.handler(event, context(repository));
     const originalPrompt = instance.messages[0];
-    const ask = requestedAsk(originalPrompt);
-    instance.answer({ toolName: "ask", input: ask, details: { answers: [{ name: "confirm_repository_boundary_mutation", answer: "Reject" }] }, isError: false });
+    answerConfirmation(instance, "Reject");
 
     // Act
     await instance.handler(event, context(repository));

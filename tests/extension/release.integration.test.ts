@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { expect, test } from "bun:test";
+import { expect, mock, test } from "bun:test";
 import { rmSync } from "node:fs";
 
 import {
@@ -17,30 +17,64 @@ const highRiskPolicy = activateReviewedPolicy(reviewPolicy(createPolicyState({
   positive: "current owned checkout",
   negative: "other repositories",
 }))).active!;
+const highRiskClassification = {
+  classification: "outside",
+  risk: "high",
+  reason: "production target",
+} as const;
 
-test("does not ask for release in an owned current checkout", async () => {
+test("when releasing from the owned current checkout, allows the release", async () => {
+  // Arrange
   const repository = checkout();
   try {
     const instance = guard();
+
+    // Act
     const result = await instance.handler(
       { toolName: "bash", input: { command: "npm run release" } },
       context(repository),
     );
+
+    // Assert
     expect(result).toBeUndefined();
+  } finally {
+    rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test("when releasing from the owned current checkout, sends no confirmation", async () => {
+  // Arrange
+  const repository = checkout();
+  try {
+    const instance = guard();
+
+    // Act
+    await instance.handler(
+      { toolName: "bash", input: { command: "npm run release" } },
+      context(repository),
+    );
+
+    // Assert
     expect(instance.messages).toEqual([]);
   } finally {
     rmSync(repository, { recursive: true, force: true });
   }
 });
 
-test("asks for release in a different owner's checkout", async () => {
+test("when releasing from a different owner's checkout, requires approval", async () => {
+  // Arrange
   const repository = checkout(`https://github.com/${external}.git`);
   try {
     const instance = guard();
-    expect(await instance.handler(
+
+    // Act
+    const result = await instance.handler(
       { toolName: "bash", input: { command: "npm run release" } },
       context(repository),
-    )).toMatchObject({ block: true });
+    );
+
+    // Assert
+    expect(result).toMatchObject({ block: true });
   } finally {
     rmSync(repository, { recursive: true, force: true });
   }
@@ -62,201 +96,372 @@ test("when releasing from an external checkout, displays its origin in the confi
   }
 });
 
-test("allows cross-boundary releases in advisory mode", async () => {
+test("when releasing across the boundary in advisory mode, allows the release", async () => {
+  // Arrange
   const repository = checkout(`https://github.com/${external}.git`);
   try {
     const instance = guard({ enforce: false });
-    expect(await instance.handler(
+
+    // Act
+    const result = await instance.handler(
       { toolName: "bash", input: { command: "npm run release" } },
       context(repository),
-    )).toBeUndefined();
+    );
+
+    // Assert
+    expect(result).toBeUndefined();
+  } finally {
+    rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test("when releasing across the boundary in advisory mode, sends no confirmation", async () => {
+  // Arrange
+  const repository = checkout(`https://github.com/${external}.git`);
+  try {
+    const instance = guard({ enforce: false });
+
+    // Act
+    await instance.handler(
+      { toolName: "bash", input: { command: "npm run release" } },
+      context(repository),
+    );
+
+    // Assert
     expect(instance.messages).toEqual([]);
   } finally {
     rmSync(repository, { recursive: true, force: true });
   }
 });
 
-test("asks when an owned checkout release specifies another repository", async () => {
+test("when a release from an owned checkout names another repository, requires approval", async () => {
+  // Arrange
   const repository = checkout();
   try {
     const instance = guard();
-    expect(await instance.handler(
+
+    // Act
+    const result = await instance.handler(
       { toolName: "bash", input: { command: `npm run release -- --repo ${external}` } },
       context(repository),
-    )).toMatchObject({ block: true });
+    );
+
+    // Assert
+    expect(result).toMatchObject({ block: true });
   } finally {
     rmSync(repository, { recursive: true, force: true });
   }
 });
 
-test("asks when a release target cannot be resolved", async () => {
+test("when an explicit release target cannot be resolved, requires approval", async () => {
+  // Arrange
   const repository = checkout();
   try {
     const instance = guard();
-    expect(await instance.handler(
+
+    // Act
+    const result = await instance.handler(
       { toolName: "bash", input: { command: 'npm run release -- --repo "$TARGET"' } },
       context(repository),
-    )).toMatchObject({ block: true });
+    );
+
+    // Assert
+    expect(result).toMatchObject({ block: true });
   } finally {
     rmSync(repository, { recursive: true, force: true });
   }
 });
 
-test("asks when a nested release specifies another repository", async () => {
+test("when a nested release names another repository, requires approval", async () => {
+  // Arrange
   const repository = checkout();
   try {
     const instance = guard();
-    expect(await instance.handler(
+
+    // Act
+    const result = await instance.handler(
       { toolName: "bash", input: { command: `bash -c 'npm run release -- --repo ${external}'` } },
       context(repository),
-    )).toMatchObject({ block: true });
+    );
+
+    // Assert
+    expect(result).toMatchObject({ block: true });
   } finally {
     rmSync(repository, { recursive: true, force: true });
   }
 });
 
-test("asks when a flagged nested release specifies another repository", async () => {
+test("when a release nested in Bash with flags names another repository, requires approval", async () => {
+  // Arrange
   const repository = checkout();
   try {
     const instance = guard();
-    expect(await instance.handler(
+
+    // Act
+    const result = await instance.handler(
       { toolName: "bash", input: { command: `bash -e -c 'npm run release -- --repo ${external}'` } },
       context(repository),
-    )).toMatchObject({ block: true });
+    );
+
+    // Assert
+    expect(result).toMatchObject({ block: true });
   } finally {
     rmSync(repository, { recursive: true, force: true });
   }
 });
 
-test("ignores repository flags outside a release command", () => {
+test("when only the adjacent command has a repository flag, keeps the release local", () => {
+  // Arrange
   const repository = checkout();
   try {
-    expect(repositoryMutationHandoff(
+    // Act
+    const handoff = repositoryMutationHandoff(
       { toolName: "bash", input: { command: `npm run release && gh issue view -R ${external}` } },
       repository,
-    )).toMatchObject({ decision: "allow", action: "release/deploy", target: current });
+    );
+
+    // Assert
+    expect(handoff).toMatchObject({ decision: "allow", action: "release/deploy", target: current });
   } finally {
     rmSync(repository, { recursive: true, force: true });
   }
 });
 
-test("does not classify an owned release under an active policy", async () => {
+test("when an active policy is configured for a release to the owned checkout, skips classification", async () => {
+  // Arrange
   const repository = checkout();
   try {
-    let classified = false;
+    const classifier = mock(async () => highRiskClassification);
     const instance = guard({
       policy: highRiskPolicy,
-      classifier: async () => {
-        classified = true;
-        return { classification: "outside", risk: "high", reason: "production target" };
-      },
+      classifier,
     });
     const event = { toolName: "bash", input: { command: `npm run release -- --repo ${current}` } };
-    expect(await instance.handler(event, context(repository))).toBeUndefined();
-    expect(classified).toBeFalse();
+
+    // Act
+    await instance.handler(event, context(repository));
+
+    // Assert
+    expect(classifier).not.toHaveBeenCalled();
+  } finally {
+    rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test("when a release explicitly targets the owned checkout under an active policy, allows it", async () => {
+  // Arrange
+  const repository = checkout();
+  try {
+    const instance = guard({
+      policy: highRiskPolicy,
+      classifier: async () => highRiskClassification,
+    });
+    const event = { toolName: "bash", input: { command: `npm run release -- --repo ${current}` } };
+
+    // Act
+    const result = await instance.handler(event, context(repository));
+
+    // Assert
+    expect(result).toBeUndefined();
+  } finally {
+    rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test("when a release explicitly targets the owned checkout under an active policy, sends no confirmation", async () => {
+  // Arrange
+  const repository = checkout();
+  try {
+    const instance = guard({
+      policy: highRiskPolicy,
+      classifier: async () => highRiskClassification,
+    });
+    const event = { toolName: "bash", input: { command: `npm run release -- --repo ${current}` } };
+
+    // Act
+    await instance.handler(event, context(repository));
+
+    // Assert
     expect(instance.messages).toEqual([]);
   } finally {
     rmSync(repository, { recursive: true, force: true });
   }
 });
 
-test("retains external release approval through queued turn delivery", async () => {
+test("when an external release is approved through the confirmation flow, allows exactly one retry", async () => {
+  // Arrange
   const repository = checkout(`https://github.com/${external}.git`);
   try {
     const instance = guard();
     const event = { toolName: "bash", input: { command: "npm run release" } };
-    expect(await instance.handler(event, context(repository))).toMatchObject({ block: true });
+    await instance.handler(event, context(repository));
     answerConfirmation(instance, "Approve");
-    expect(await instance.handler(event, context(repository))).toBeUndefined();
-    expect(await instance.handler(event, context(repository))).toMatchObject({ block: true });
+
+    // Act
+    const approvedRetry = await instance.handler(event, context(repository));
+    const subsequentRetry = await instance.handler(event, context(repository));
+
+    // Assert
+    expect([approvedRetry, subsequentRetry]).toEqual([
+      undefined,
+      expect.objectContaining({ block: true }),
+    ]);
   } finally {
     rmSync(repository, { recursive: true, force: true });
   }
 });
 
-test("keeps exact external release approval after a changed command is blocked", async () => {
+test("when an approved release changes, blocks the change and preserves approval for the original", async () => {
+  // Arrange
   const repository = checkout(`https://github.com/${external}.git`);
   try {
     const instance = guard();
     const event = { toolName: "bash", input: { command: "npm run release" } };
-    expect(await instance.handler(event, context(repository))).toMatchObject({ block: true });
+    const changed = { toolName: "bash", input: { command: "npm run release -- --dry-run" } };
+    await instance.handler(event, context(repository));
     answerConfirmation(instance, "Approve");
-    expect(await instance.handler(
-      { toolName: "bash", input: { command: "npm run release -- --dry-run" } },
-      context(repository),
-    )).toMatchObject({ block: true });
-    expect(await instance.handler(event, context(repository))).toBeUndefined();
+
+    // Act
+    const changedResult = await instance.handler(changed, context(repository));
+    const originalResult = await instance.handler(event, context(repository));
+
+    // Assert
+    expect([changedResult, originalResult]).toEqual([
+      expect.objectContaining({ block: true }),
+      undefined,
+    ]);
   } finally {
     rmSync(repository, { recursive: true, force: true });
   }
 });
 
-test("does not authorize release in a different checkout", async () => {
+test("when an approved release is retried in a different checkout, requires fresh approval", async () => {
+  // Arrange
   const repository = checkout(`https://github.com/${external}.git`);
   const otherRepository = checkout("https://github.com/elsewhere/another.git");
   try {
     const instance = guard();
     const event = { toolName: "bash", input: { command: "npm run release" } };
-    expect(await instance.handler(event, context(repository))).toMatchObject({ block: true });
+    await instance.handler(event, context(repository));
     answerConfirmation(instance, "Approve");
-    expect(await instance.handler(event, context(otherRepository))).toMatchObject({ block: true });
+
+    // Act
+    const result = await instance.handler(event, context(otherRepository));
+
+    // Assert
+    expect(result).toMatchObject({ block: true });
   } finally {
     rmSync(repository, { recursive: true, force: true });
     rmSync(otherRepository, { recursive: true, force: true });
   }
 });
 
-test("does not authorize a changed origin in the same checkout", async () => {
+test("when an approved release's origin changes in the same checkout, requires fresh approval", async () => {
+  // Arrange
   const repository = checkout(`https://github.com/${external}.git`);
   try {
     const instance = guard();
     const event = { toolName: "bash", input: { command: "npm run release" } };
-    expect(await instance.handler(event, context(repository))).toMatchObject({ block: true });
+    await instance.handler(event, context(repository));
     answerConfirmation(instance, "Approve");
     execFileSync("git", ["-C", repository, "remote", "set-url", "origin", "https://github.com/elsewhere/another.git"]);
-    expect(await instance.handler(event, context(repository))).toMatchObject({ block: true });
+
+    // Act
+    const result = await instance.handler(event, context(repository));
+
+    // Assert
+    expect(result).toMatchObject({ block: true });
   } finally {
     rmSync(repository, { recursive: true, force: true });
   }
 });
 
-test("passes unresolved release targets through without UI", async () => {
+test("when a release has no resolved origin or approval UI, allows the release", async () => {
+  // Arrange
   const repository = checkout(null);
   try {
     const instance = guard();
-    expect(await instance.handler(
+
+    // Act
+    const result = await instance.handler(
       { toolName: "bash", input: { command: "npm run release" } },
       context(repository, false),
-    )).toBeUndefined();
+    );
+
+    // Assert
+    expect(result).toBeUndefined();
   } finally {
     rmSync(repository, { recursive: true, force: true });
   }
 });
 
-test("uses a one-shot internal capability, not an ordinary input field", () => {
+test("when a release command supplies its own internal-release flag, still requires approval", () => {
+  // Arrange
   const repository = checkout(null);
   try {
-    expect(releaseHandoff({ toolName: "bash", input: { command: "deploy production", internalRelease: true } }, repository)).toMatchObject({ decision: "ask" });
-    const changedEvent: ToolCallEvent = { toolName: "bash", input: { command: "deploy production" } };
-    authorizeInternalRelease(changedEvent);
-    changedEvent.input.command = "publish production";
-    expect(releaseHandoff(changedEvent, repository)).toMatchObject({ decision: "ask" });
-    const event: ToolCallEvent = { toolName: "bash", input: { command: "deploy production" } };
-    authorizeInternalRelease(event);
-    expect(releaseHandoff(event, repository)).toEqual({ decision: "allow" });
-    expect(releaseHandoff(event, repository)).toMatchObject({ decision: "ask" });
+    const event = { toolName: "bash", input: { command: "deploy production", internalRelease: true } };
+
+    // Act
+    const handoff = releaseHandoff(event, repository);
+
+    // Assert
+    expect(handoff).toMatchObject({ decision: "ask" });
   } finally {
     rmSync(repository, { recursive: true, force: true });
   }
 });
 
-test("keeps an external push protected when a release command is present", () => {
+test("when a command changes after receiving the internal release capability, requires approval", () => {
+  // Arrange
+  const repository = checkout(null);
+  try {
+    const event: ToolCallEvent = { toolName: "bash", input: { command: "deploy production" } };
+    authorizeInternalRelease(event);
+    event.input.command = "publish production";
+
+    // Act
+    const handoff = releaseHandoff(event, repository);
+
+    // Assert
+    expect(handoff).toMatchObject({ decision: "ask" });
+  } finally {
+    rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test("when a release receives the internal capability, allows exactly one invocation", () => {
+  // Arrange
+  const repository = checkout(null);
+  try {
+    const event: ToolCallEvent = { toolName: "bash", input: { command: "deploy production" } };
+    authorizeInternalRelease(event);
+
+    // Act
+    const authorizedHandoff = releaseHandoff(event, repository);
+    const subsequentHandoff = releaseHandoff(event, repository);
+
+    // Assert
+    expect([authorizedHandoff, subsequentHandoff]).toEqual([
+      { decision: "allow" },
+      expect.objectContaining({ decision: "ask" }),
+    ]);
+  } finally {
+    rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test("when a release command accompanies an external push, still requires approval for the push", () => {
+  // Arrange
   const repository = checkout();
   try {
-    expect(repositoryMutationHandoff(
+    // Act
+    const handoff = repositoryMutationHandoff(
       { toolName: "bash", input: { command: `npm run release && git push https://github.com/${external}.git HEAD` } },
       repository,
-    )).toMatchObject({ decision: "ask", action: "git push", target: external });
+    );
+
+    // Assert
+    expect(handoff).toMatchObject({ decision: "ask", action: "git push", target: external });
   } finally {
     rmSync(repository, { recursive: true, force: true });
   }

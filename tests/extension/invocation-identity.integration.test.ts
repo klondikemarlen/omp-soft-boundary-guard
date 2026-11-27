@@ -9,37 +9,47 @@ const repository = checkout();
 afterAll(() => rmSync(repository, { recursive: true, force: true }));
 
 test("when nested object keys are reordered, preserves the one-shot approval", async () => {
-  // Arrange: use the shared checkout and prepare an approved invocation.
+  // Arrange
   const instance = installedGuard();
   const command = "gh api --method POST repos/elsewhere/example/issues -f title=synthetic";
   const original = { toolName: "bash", input: { command, ready: { host: "127.0.0.1", port: 3000 } } };
-  // Act
+  const retry = { toolName: "bash", input: { command, ready: { port: 3000, host: "127.0.0.1" } } };
   await instance.handler(original, context(repository));
   answerConfirmation(instance, "Approve");
 
-  const retry = { toolName: "bash", input: { command, ready: { port: 3000, host: "127.0.0.1" } } };
-  // Act / Assert
-  expect(await instance.handler(retry, context(repository))).toBeUndefined();
-  expect(await instance.handler(retry, context(repository))).toMatchObject({ block: true });
+  // Act
+  const approvedRetry = await instance.handler(retry, context(repository));
+  const subsequentRetry = await instance.handler(retry, context(repository));
+
+  // Assert
+  expect([approvedRetry, subsequentRetry]).toEqual([
+    undefined,
+    expect.objectContaining({ block: true }),
+  ]);
 });
 
 test("when only the display title changes, preserves one-shot Python approval", async () => {
-  // Arrange: use the shared checkout and prepare an approved invocation.
+  // Arrange
   const instance = installedGuard();
   const code = 'import subprocess\nsubprocess.run(["gh", "api", "--method", "POST", "repos/elsewhere/example/issues/1/comments", "-f", "body=synthetic"])';
   const original = { toolName: "eval", input: { language: "py", code, title: "Inspecting publication" } };
-  // Act
+  const retry = { toolName: "eval", input: { language: "py", code, title: "Retrying approved publication" } };
   await instance.handler(original, context(repository));
   answerConfirmation(instance, "Approve");
 
-  const retry = { toolName: "eval", input: { language: "py", code, title: "Retrying approved publication" } };
-  // Act / Assert
-  expect(await instance.handler(retry, context(repository))).toBeUndefined();
-  expect(await instance.handler(retry, context(repository))).toMatchObject({ block: true });
+  // Act
+  const approvedRetry = await instance.handler(retry, context(repository));
+  const subsequentRetry = await instance.handler(retry, context(repository));
+
+  // Assert
+  expect([approvedRetry, subsequentRetry]).toEqual([
+    undefined,
+    expect.objectContaining({ block: true }),
+  ]);
 });
 
-test("when Python code changes, does not treat it as presentation metadata", async () => {
-  // Arrange: use the shared checkout and prepare an approved invocation.
+test("when Python code changes without changing the display title, requires fresh approval", async () => {
+  // Arrange
   const instance = installedGuard();
   const original = {
     toolName: "eval",
@@ -49,32 +59,36 @@ test("when Python code changes, does not treat it as presentation metadata", asy
       title: "Inspecting publication",
     },
   };
-  // Act
-  await instance.handler(original, context(repository));
-  answerConfirmation(instance, "Approve");
-
   const changed = {
     toolName: "eval",
     input: {
       language: "py",
       code: 'import subprocess\nsubprocess.run(["gh", "api", "--method", "POST", "repos/elsewhere/example/issues/1/comments", "-f", "body=changed"])',
-      title: "Retrying publication",
+      title: original.input.title,
     },
   };
-  // Act / Assert
-  expect(await instance.handler(changed, context(repository))).toMatchObject({ block: true });
-});
-
-test("when a nested execution value changes, requires fresh approval", async () => {
-  // Arrange: use the shared checkout and prepare an approved invocation.
-  const instance = installedGuard();
-  const command = "gh api --method POST repos/elsewhere/example/issues -f title=synthetic";
-  const original = { toolName: "bash", input: { command, ready: { host: "127.0.0.1", port: 3000 } } };
-  // Act
   await instance.handler(original, context(repository));
   answerConfirmation(instance, "Approve");
 
+  // Act
+  const result = await instance.handler(changed, context(repository));
+
+  // Assert
+  expect(result).toMatchObject({ block: true });
+});
+
+test("when a nested execution value changes, requires fresh approval", async () => {
+  // Arrange
+  const instance = installedGuard();
+  const command = "gh api --method POST repos/elsewhere/example/issues -f title=synthetic";
+  const original = { toolName: "bash", input: { command, ready: { host: "127.0.0.1", port: 3000 } } };
   const changed = { toolName: "bash", input: { command, ready: { host: "127.0.0.1", port: 4000 } } };
-  // Act / Assert
-  expect(await instance.handler(changed, context(repository))).toMatchObject({ block: true });
+  await instance.handler(original, context(repository));
+  answerConfirmation(instance, "Approve");
+
+  // Act
+  const result = await instance.handler(changed, context(repository));
+
+  // Assert
+  expect(result).toMatchObject({ block: true });
 });

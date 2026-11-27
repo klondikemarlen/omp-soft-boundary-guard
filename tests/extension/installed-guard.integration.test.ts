@@ -109,7 +109,7 @@ describe("installed default GitHub enforcement", () => {
       expect(requestedAsk(instance.messages.at(-1)).html).toContain(`Current repository: ${current}\nTarget repository: ${upstream}`);
     });
 
-    test("when the revised upstream Python issue is declined, keeps the exact retry blocked without requesting approval again", async () => {
+    test("when the revised upstream Python issue is declined, keeps the exact retry blocked", async () => {
       // Arrange
       const instance = installedGuard();
       const original = pythonIssue("Original body");
@@ -124,6 +124,23 @@ describe("installed default GitHub enforcement", () => {
         block: true,
         reason: expect.stringContaining("The previous confirmation was not approved; no duplicate confirmation was requested."),
       });
+    });
+
+    test("when the revised upstream Python issue is declined, does not resend the confirmation on retry", async () => {
+      // Arrange
+      const instance = installedGuard();
+      const original = pythonIssue("Original body");
+      const revised = pythonIssue("Changed body");
+      await instance.handler(original, context(repository));
+      answer(instance, "Approve");
+      await instance.handler(revised, context(repository));
+      answer(instance, "Reject");
+
+      // Act
+      await instance.handler(revised, context(repository));
+
+      // Assert
+      expect(instance.messages).toHaveLength(2);
     });
 
     test("when the upstream Python issue is approved, allows the exact heredoc retry", async () => {

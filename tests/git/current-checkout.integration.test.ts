@@ -13,8 +13,12 @@ test("when invoked below a checkout root, resolves the same origin", () => {
   const nested = `${repository}/nested`;
   try {
     mkdirSync(nested);
-    // Act / Assert
-    expect([currentCheckoutRepository(repository), currentCheckoutRepository(nested)]).toEqual([current, current]);
+
+    // Act
+    const origins = [repository, nested].map(currentCheckoutRepository);
+
+    // Assert
+    expect(origins).toEqual([current, current]);
   } finally {
     rmSync(repository, { recursive: true, force: true });
   }
@@ -27,8 +31,12 @@ test("when nested Git metadata is invalid, resolves the enclosing checkout", () 
   try {
     mkdirSync(`${nested}/src`, { recursive: true });
     writeFileSync(`${nested}/.git`, "");
-    // Act / Assert
-    expect(currentCheckoutRepository(`${nested}/src`)).toBe(current);
+
+    // Act
+    const origin = currentCheckoutRepository(`${nested}/src`);
+
+    // Assert
+    expect(origin).toBe(current);
   } finally {
     rmSync(repository, { recursive: true, force: true });
   }
@@ -36,20 +44,45 @@ test("when nested Git metadata is invalid, resolves the enclosing checkout", () 
 
 test("when nested Git metadata is invalid, permits edits below it", async () => {
   // Arrange
-  const repository = checkout();
+  const repository = checkoutOutsideTemporaryDirectory();
   const nested = `${repository}/api`;
   const target = `${nested}/src/inside.ts`;
   try {
     mkdirSync(`${nested}/src`, { recursive: true });
     writeFileSync(`${nested}/.git`, "");
+    writeFileSync(target, "export const original = true;\n");
     const instance = guard();
     // Act
     const result = await instance.handler(
-      { toolName: "edit", input: { input: `[file ${target}#ABCD]\nSWAP 1.=1:\n+export {};` } },
+      { toolName: "edit", input: { input: `*** Begin Patch\n[${target}#ABCD]\nPUT 1.=1:\n+export {};\n*** End Patch\n` } },
       context(repository),
     );
     // Assert
-    expect([result, instance.messages]).toEqual([undefined, []]);
+    expect(result).toBeUndefined();
+  } finally {
+    rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test("when an edit stays below invalid nested Git metadata, sends no confirmation", async () => {
+  // Arrange
+  const repository = checkoutOutsideTemporaryDirectory();
+  const nested = `${repository}/api`;
+  const target = `${nested}/src/inside.ts`;
+  try {
+    mkdirSync(`${nested}/src`, { recursive: true });
+    writeFileSync(`${nested}/.git`, "");
+    writeFileSync(target, "export const original = true;\n");
+    const instance = guard();
+
+    // Act
+    await instance.handler(
+      { toolName: "edit", input: { input: `*** Begin Patch\n[${target}#ABCD]\nPUT 1.=1:\n+export {};\n*** End Patch\n` } },
+      context(repository),
+    );
+
+    // Assert
+    expect(instance.messages).toEqual([]);
   } finally {
     rmSync(repository, { recursive: true, force: true });
   }
@@ -62,8 +95,12 @@ test("when invoked in a worktree, resolves its origin", () => {
   try {
     execFileSync("git", ["-C", repository, "-c", "user.name=Guard", "-c", "user.email=guard@example.test", "commit", "--allow-empty", "-m", "initial"]);
     execFileSync("git", ["-C", repository, "worktree", "add", worktree, "-b", "feature"]);
-    // Act / Assert
-    expect(currentCheckoutRepository(worktree)).toBe(current);
+
+    // Act
+    const origin = currentCheckoutRepository(worktree);
+
+    // Assert
+    expect(origin).toBe(current);
   } finally {
     rmSync(worktree, { recursive: true, force: true });
     rmSync(repository, { recursive: true, force: true });
@@ -86,7 +123,32 @@ test("when worktrees have no remote, permits mutations within their shared repos
       context(nested),
     );
     // Assert
-    expect([result, instance.messages]).toEqual([undefined, []]);
+    expect(result).toBeUndefined();
+  } finally {
+    rmSync(worktree, { recursive: true, force: true });
+    rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test("when a write targets a linked worktree without a remote, sends no confirmation", async () => {
+  // Arrange
+  const repository = checkout(null);
+  const worktree = resolve(`omp-soft-boundary-guard-${crypto.randomUUID()}`);
+  const nested = `${repository}/nested`;
+  try {
+    execFileSync("git", ["-C", repository, "-c", "user.name=Guard", "-c", "user.email=guard@example.test", "commit", "--allow-empty", "-m", "initial"]);
+    execFileSync("git", ["-C", repository, "worktree", "add", worktree, "-b", "feature"]);
+    mkdirSync(nested);
+    const instance = guard();
+
+    // Act
+    await instance.handler(
+      { toolName: "write", input: { path: `${worktree}/inside.ts`, content: "export {};\n" } },
+      context(nested),
+    );
+
+    // Assert
+    expect(instance.messages).toEqual([]);
   } finally {
     rmSync(worktree, { recursive: true, force: true });
     rmSync(repository, { recursive: true, force: true });
@@ -176,9 +238,10 @@ test("when an external write is approved, permits its retry", async () => {
     const instance = guard();
     const target = `${otherCheckout}/outside.ts`;
     const event = { toolName: "write", input: { path: target, content: "export {};\n" } };
-    // Act
     await instance.handler(event, context(repository));
     answerConfirmation(instance, "Approve");
+
+    // Act
     const retry = await instance.handler(event, context(repository));
     // Assert
     expect(retry).toBeUndefined();
@@ -207,19 +270,39 @@ test("when an external write resolves, requires approval", async () => {
   }
 });
 
-test("when a local target cannot resolve, passes without asking", async () => {
+test("when a symlink loop prevents resolving a write target, allows the write", async () => {
   // Arrange
-  const repository = checkout();
-  const target = resolve(repository, "..", `unresolved-${crypto.randomUUID()}`, "created.ts");
+  const repository = checkoutOutsideTemporaryDirectory();
   try {
+    symlinkSync("loop", `${repository}/loop`);
     const instance = guard();
     // Act
     const result = await instance.handler(
-      { toolName: "write", input: { path: target, content: "" } },
+      { toolName: "write", input: { path: "loop/created.ts", content: "" } },
       context(repository),
     );
     // Assert
-    expect([result, instance.messages]).toEqual([undefined, []]);
+    expect(result).toBeUndefined();
+  } finally {
+    rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test("when a symlink loop prevents resolving a write target, sends no confirmation", async () => {
+  // Arrange
+  const repository = checkoutOutsideTemporaryDirectory();
+  try {
+    symlinkSync("loop", `${repository}/loop`);
+    const instance = guard();
+
+    // Act
+    await instance.handler(
+      { toolName: "write", input: { path: "loop/created.ts", content: "" } },
+      context(repository),
+    );
+
+    // Assert
+    expect(instance.messages).toEqual([]);
   } finally {
     rmSync(repository, { recursive: true, force: true });
   }
@@ -233,9 +316,10 @@ test("when an external symlink write is approved, permits its retry", async () =
     symlinkSync(otherCheckout, `${repository}/outside`);
     const event = { toolName: "write", input: { path: "outside/created.ts", content: "export {};\n" } };
     const instance = guard();
-    // Act
     await instance.handler(event, context(repository));
     answerConfirmation(instance, "Approve");
+
+    // Act
     const retry = await instance.handler(event, context(repository));
     // Assert
     expect(retry).toBeUndefined();
@@ -287,7 +371,7 @@ test("when a move stays within one repository, permits it", async () => {
   }
 });
 
-test("when a symlink target is dangling, passes without asking", async () => {
+test("when a symlink target is dangling, allows the write", async () => {
   // Arrange
   const repository = checkout();
   try {
@@ -299,7 +383,27 @@ test("when a symlink target is dangling, passes without asking", async () => {
       context(repository),
     );
     // Assert
-    expect([result, instance.messages]).toEqual([undefined, []]);
+    expect(result).toBeUndefined();
+  } finally {
+    rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test("when a symlink target is dangling, sends no confirmation", async () => {
+  // Arrange
+  const repository = checkout();
+  try {
+    symlinkSync("../outside-missing", `${repository}/dangling-outside`);
+    const instance = guard();
+
+    // Act
+    await instance.handler(
+      { toolName: "write", input: { path: "dangling-outside/created.ts", content: "" } },
+      context(repository),
+    );
+
+    // Assert
+    expect(instance.messages).toEqual([]);
   } finally {
     rmSync(repository, { recursive: true, force: true });
   }
@@ -336,9 +440,10 @@ test("when an outbound move is approved, permits its retry", async () => {
       input: { input: `*** Begin Patch\n[inside.ts#ABCD]\nMV ${relative(repository, otherCheckout)}/moved.ts\n*** End Patch\n` },
     };
     const instance = guard();
-    // Act
     await instance.handler(event, context(repository));
     answerConfirmation(instance, "Approve");
+
+    // Act
     const result = await instance.handler(event, context(repository));
     // Assert
     expect(result).toBeUndefined();
@@ -381,9 +486,10 @@ test("when an inbound move is approved, permits its retry", async () => {
       input: { input: `*** Begin Patch\n[${relative(repository, otherCheckout)}/outside.ts#ABCD]\nMV moved.ts\n*** End Patch\n` },
     };
     const instance = guard();
-    // Act
     await instance.handler(event, context(repository));
     answerConfirmation(instance, "Approve");
+
+    // Act
     const result = await instance.handler(event, context(repository));
     // Assert
     expect(result).toBeUndefined();

@@ -23,16 +23,20 @@ export function currentCheckoutRoot(cwd: string): string | undefined {
   }
 }
 
+export function checkoutOriginRepository(root: string): string | undefined {
+  return remoteRepository(gitCommandOutput(root, ["remote", "get-url", "origin"]));
+}
+
 export function currentCheckoutRepository(cwd: string): string | undefined {
   const root = currentCheckoutRoot(cwd);
-  return root ? remoteRepository(gitCommandOutput(root, ["remote", "get-url", "origin"])) : undefined;
+  return root ? checkoutOriginRepository(root) : undefined;
 }
 
 export function currentCheckoutBoundary(cwd: string): string | undefined {
   const root = currentCheckoutRoot(cwd);
   if (!root) return undefined;
 
-  const repository = remoteRepository(gitCommandOutput(root, ["remote", "get-url", "origin"]));
+  const repository = checkoutOriginRepository(root);
   if (repository) return repository;
 
   const commonDirectory = gitCommandOutput(root, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);

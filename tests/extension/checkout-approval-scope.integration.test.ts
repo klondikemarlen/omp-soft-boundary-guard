@@ -53,7 +53,7 @@ test("when a different action in the same checkout omits origin metadata, keeps 
   }
 });
 
-test("when a release retry changes in the same checkout without an origin, retains the exact release approval", async () => {
+test("when a changed release is blocked and rejected, permits only the original release in a checkout without an origin", async () => {
   // Arrange
   const repository = checkout(null);
   const instance = guard();
@@ -64,11 +64,18 @@ test("when a release retry changes in the same checkout without an origin, retai
     answerConfirmation(instance, "Approve");
 
     // Act
-    await instance.handler(changedRelease, context(repository));
+    const changedAttempt = await instance.handler(changedRelease, context(repository));
+    answerConfirmation(instance, "Reject");
+    const rejectedRetry = await instance.handler(changedRelease, context(repository));
     const exactRetry = await instance.handler(release, context(repository));
 
     // Assert
-    expect(exactRetry).toBeUndefined();
+    expect({ changedAttempt, rejectedRetry, exactRetry, promptCount: instance.messages.length }).toEqual({
+      changedAttempt: expect.objectContaining({ block: true }),
+      rejectedRetry: expect.objectContaining({ block: true }),
+      exactRetry: undefined,
+      promptCount: 2,
+    });
   } finally {
     rmSync(repository, { recursive: true, force: true });
   }
@@ -156,6 +163,44 @@ test("when an early external approval is followed by a checkout change, requires
     expect(result).toMatchObject({ block: true, reason: expect.stringContaining("OMP ask confirmation requested") });
   } finally {
     rmSync(otherCheckout, { recursive: true, force: true });
+    rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test.each([
+  { scope: "the same origin", initialOrigin: current, nextOrigin: current, expected: { blocked: false, promptCount: 0 } },
+  { scope: "a different origin", initialOrigin: current, nextOrigin: "elsewhere/another", expected: { blocked: true, promptCount: 1 } },
+  { scope: "a new origin", initialOrigin: null, nextOrigin: current, expected: { blocked: true, promptCount: 1 } },
+])("when an early external approval is retried under $scope in the same checkout, enforces origin scope", async ({ initialOrigin, nextOrigin, expected }) => {
+  // Arrange
+  const repository = checkout(initialOrigin && `https://github.com/${initialOrigin}.git`);
+  const instance = guard();
+  const command = `gh issue create --repo ${external} --title Scoped`;
+  const externalWrite = { toolName: "bash", input: { command } };
+  const earlyAsk = {
+    toolName: "ask",
+    input: {
+      questions: [{
+        id: "confirm_external_github_write",
+        question: `Allow one GitHub issue creation to ${external}?\nIssue title: Scoped\nCommand: ${command}`,
+      }],
+    },
+  };
+  try {
+    await instance.handler(earlyAsk, context(repository));
+    instance.answer({ ...earlyAsk, details: { selectedOptions: ["Approve"] }, isError: false });
+    if (initialOrigin !== nextOrigin) {
+      const operation = initialOrigin === null ? "add" : "set-url";
+      execFileSync("git", ["-C", repository, "remote", operation, "origin", `https://github.com/${nextOrigin}.git`]);
+    }
+
+    // Act
+    const retry = await instance.handler(externalWrite, context(repository));
+
+    // Assert
+    const blocked = retry !== undefined && "block" in retry;
+    expect({ blocked, promptCount: instance.messages.length }).toEqual(expected);
+  } finally {
     rmSync(repository, { recursive: true, force: true });
   }
 });

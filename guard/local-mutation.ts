@@ -339,15 +339,17 @@ function gitLocalMutation(event: ToolCallEvent, sessionCwd: string): LocalMutati
     return undefined;
   }
 
-  const boundary = currentCheckoutBoundary(sessionCwd);
-  if (!boundary) {
-    return undefined;
-  }
+  let boundary: string | undefined;
 
   for (const segment of shellExecutionSegments(event.input, sessionCwd)) {
     const invocation = gitInvocation(segment.words);
     if (!invocation || !isMutatingGitInvocation(invocation)) {
       continue;
+    }
+
+    boundary ??= currentCheckoutBoundary(sessionCwd);
+    if (!boundary) {
+      return undefined;
     }
 
     if (!segment.cwd) {

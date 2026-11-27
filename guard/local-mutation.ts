@@ -4,6 +4,7 @@ import { dirname, isAbsolute, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import type { ToolCallEvent } from "../extension/contract.ts";
+import { isReadOnlyGitConfig } from "../git/config-command.ts";
 import { currentCheckoutBoundary } from "../git/current-checkout.ts";
 import { gitInvocation, gitInvocationRoot, type GitInvocation } from "../git/invocation.ts";
 import { shellExecutionSegments, toolDirectory } from "../shell/directory.ts";
@@ -184,27 +185,6 @@ const GIT_BRANCH_AND_TAG_INSPECTION_OPTIONS: Record<string, true> = {
   "--show-current": true,
 };
 
-const GIT_CONFIG_READ_ONLY_OPTIONS: Record<string, true> = {
-  "--get": true,
-  "--get-all": true,
-  "--get-color": true,
-  "--get-colorbool": true,
-  "--get-regexp": true,
-  "--get-urlmatch": true,
-  "--list": true,
-  "-l": true,
-};
-
-const GIT_CONFIG_MUTATION_OPTIONS: Record<string, true> = {
-  "--add": true,
-  "--edit": true,
-  "--remove-section": true,
-  "--rename-section": true,
-  "--replace-all": true,
-  "--unset": true,
-  "--unset-all": true,
-};
-
 const GIT_STASH_SHOW_OPTIONS: Record<string, true> = {
   "--include-untracked": true,
   "--name-only": true,
@@ -234,6 +214,10 @@ function firstGitSubcommand(commandArguments: (string | undefined)[]): string | 
 }
 
 function isReadOnlyGitCommand(command: string, commandArguments: (string | undefined)[]): boolean {
+  if (command === "config") {
+    return isReadOnlyGitConfig(commandArguments);
+  }
+
   const argumentEnd = commandArguments.indexOf("--");
   const options = argumentEnd < 0 ? commandArguments : commandArguments.slice(0, argumentEnd);
   if (options.some((argument) => argument === "-h" || argument === "--help")) {
@@ -243,20 +227,6 @@ function isReadOnlyGitCommand(command: string, commandArguments: (string | undef
   if (command === "remote") {
     const subcommand = firstGitSubcommand(commandArguments);
     return subcommand === undefined || subcommand === "show" || subcommand === "get-url";
-  }
-
-  if (command === "config") {
-    if (
-      commandArguments.some(
-        (argument) => typeof argument === "string" && Object.hasOwn(GIT_CONFIG_MUTATION_OPTIONS, argument),
-      )
-    ) {
-      return false;
-    }
-
-    return commandArguments.some(
-      (argument) => typeof argument === "string" && Object.hasOwn(GIT_CONFIG_READ_ONLY_OPTIONS, argument),
-    );
   }
 
   if (command === "stash") {

@@ -1,12 +1,10 @@
 import type { ToolCallEvent } from "../extension/contract.ts";
 import { currentCheckoutRepository, currentCheckoutRoot } from "../git/current-checkout.ts";
-import { defaultPushRemote } from "../git/default-push-remote.ts";
-import { pushRepository } from "../git/push-repository.ts";
+import { pushRepositories } from "../git/push-repository.ts";
 import { gitPushWrite } from "../git/push-write.ts";
 import { pinGitHubDeviceRepository } from "../github/device-write.ts";
 import { implicitIssueRepository } from "../github/implicit-issue-repository.ts";
 import { pythonGitHubCliWrites } from "../github/python-cli-write.ts";
-import { remoteRepository } from "../github/remote-repository.ts";
 import { recognizedGitHubWrite } from "../github/recognized-write.ts";
 import type { GitHubWrite } from "../github/write.ts";
 import { shellExecutionSegments, toolDirectory } from "../shell/directory.ts";
@@ -65,8 +63,8 @@ export function githubHandoff(event: ToolCallEvent, cwd: string, pythonSource?: 
   }
 
   if (write.action === "git push" && !write.targetUnresolved && commandCwd !== undefined) {
-    const remote = write.remote ?? defaultPushRemote(commandCwd, write.gitOptions);
-    write.target = remoteRepository(remote) ?? pushRepository(commandCwd, remote, write.gitOptions);
+    const repositories = pushRepositories(commandCwd, write.remote, write.gitOptions);
+    write.target = repositories.join(", ") || undefined;
     write.targetUnresolved = !write.target;
   }
 

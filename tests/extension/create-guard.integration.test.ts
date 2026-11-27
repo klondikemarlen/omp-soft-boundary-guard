@@ -7,7 +7,7 @@ import {
   repositoryMutationHandoff,
 } from "../../index.ts";
 import {
-  approve,
+  answerConfirmation,
   checkout,
   checkoutOutsideTemporaryDirectory,
   context,
@@ -167,11 +167,11 @@ test("when local Git mutation follows remote issue approval, requires separate a
 
     const instance = guard();
     expect(await instance.handler(issueEvent, context(repository))).toMatchObject({ block: true });
-    approve(instance, "GitHub issue creation", external, "\nIssue title: External report");
+    answerConfirmation(instance, "Approve");
     expect(await instance.handler(issueEvent, context(repository))).toBeUndefined();
 
     expect(await instance.handler(gitEvent, context(repository))).toMatchObject({ block: true });
-    approve(instance, "git mutation", otherRepository);
+    answerConfirmation(instance, "Approve");
     expect(await instance.handler(gitEvent, context(repository))).toBeUndefined();
     expect(await instance.handler(
       { toolName: "bash", input: { command: "git status --short", cwd: otherRepository } },
@@ -295,7 +295,7 @@ test("when GitHub commands have environment prefixes, enforces the same reposito
     // Act / Assert
     expect(await instance.handler(externalEvent, context(repository))).toMatchObject({ block: true });
     expect(instance.messages[0]).toContain("Body: Why this exists");
-    approve(instance, "GitHub issue creation", external, "\nIssue title: External report");
+    answerConfirmation(instance, "Approve");
     expect(await instance.handler(externalEvent, context(repository))).toBeUndefined();
     expect(
       await instance.handler(
@@ -367,7 +367,7 @@ test("when an issue title contains quotes and newlines, permits its exact approv
     };
     // Act / Assert
     expect(await instance.handler(event, context(repository))).toMatchObject({ block: true });
-    approve(instance, "GitHub issue creation", external, `\nIssue title: ${title}`);
+    answerConfirmation(instance, "Approve");
     expect(await instance.handler(event, context(repository))).toBeUndefined();
   } finally {
     rmSync(repository, { recursive: true, force: true });
@@ -560,14 +560,14 @@ test("when explicit pull-request and issue mutations are approved, permits their
   try {
     const instance = guard();
     // Act / Assert
-    for (const [command, action] of [
-      [`gh pr edit 79 --repo ${external} --body "Updated"`, "GitHub pull request update"],
-      [`gh pr merge 79 --repo ${external} --merge --delete-branch`, "GitHub pull request update"],
-      [`gh issue close 76 --repo ${external} --comment "Resolved"`, "GitHub issue update"],
+    for (const command of [
+      `gh pr edit 79 --repo ${external} --body "Updated"`,
+      `gh pr merge 79 --repo ${external} --merge --delete-branch`,
+      `gh issue close 76 --repo ${external} --comment "Resolved"`,
     ]) {
       const event = { toolName: "bash", input: { command } };
       expect(await instance.handler(event, context(repository))).toMatchObject({ block: true });
-      approve(instance, action, external, `\nCommand: ${command}`);
+      answerConfirmation(instance, "Approve");
       expect(await instance.handler(event, context(repository))).toBeUndefined();
     }
   } finally {

@@ -4,7 +4,7 @@ import { expect, test } from "bun:test";
 
 import type { ToolCallEvent } from "../../extension/contract.ts";
 import { nativeAskApproval } from "./native-ask-fixture.ts";
-import { approve, checkout, context, external, guard, type Guard } from "./test-support.ts";
+import { answerConfirmation, checkout, context, external, guard, requestedAsk, type Guard } from "./test-support.ts";
 
 import { repositoryMutationHandoff } from "../../guard/handoff.ts";
 
@@ -127,7 +127,7 @@ test("when retrying from a nested directory, preserves the approved checkout ide
     mkdirSync(nestedDirectory);
     const instance = guard();
     await instance.handler(event, context(repository));
-    approve(instance, "GitHub issue creation", external);
+    answerConfirmation(instance, "Approve");
 
     // Act / Assert
     expect(await instance.handler(event, context(nestedDirectory))).toBeUndefined();
@@ -307,7 +307,7 @@ test("when only intent changes, permits the approved write retry", async () => {
     const event = { toolName: "write", input: { i: "create issue", path: "xd://github", content: JSON.stringify({ op: "issue_create", repo: external, title: "Intent-independent issue" }) } };
     // Act / Assert
     await instance.handler(event, context(repository));
-    approve(instance, "GitHub issue creation", external, "\nIssue title: Intent-independent issue");
+    answerConfirmation(instance, "Approve");
     const retry = { toolName: "write", input: { ...event.input, i: "retry approved issue" } };
     const result = await instance.handler(retry, context(repository));
     expect(result).toBeUndefined();
@@ -323,7 +323,7 @@ test("when UI is unavailable, preserves approval for a later interactive retry",
     const instance = guard();
     const event = { toolName: "write", input: { i: "create issue", path: "xd://github", content: JSON.stringify({ op: "issue_create", repo: external, title: "UI-bound issue" }) } };
     await instance.handler(event, context(repository));
-    approve(instance, "GitHub issue creation", external, "\nIssue title: UI-bound issue");
+    answerConfirmation(instance, "Approve");
     await instance.handler(event, context(repository, false));
 
     // Act / Assert
@@ -340,7 +340,7 @@ test("when an interactive retry consumes approval after a headless attempt, bloc
   const event = { toolName: "write", input: { i: "create issue", path: "xd://github", content: JSON.stringify({ op: "issue_create", repo: external, title: "UI-bound issue" }) } };
   try {
     await instance.handler(event, context(repository));
-    approve(instance, "GitHub issue creation", external, "\nIssue title: UI-bound issue");
+    answerConfirmation(instance, "Approve");
     await instance.handler(event, context(repository, false));
     await instance.handler(event, context(repository));
 
@@ -362,7 +362,7 @@ test("when an approved payload changes, rejects the retry", async () => {
     const original = { toolName: "write", input: { i: "create issue", path: "xd://github", content: JSON.stringify({ op: "issue_create", repo: external, title: "Original issue" }) } };
     // Act / Assert
     await instance.handler(original, context(repository));
-    approve(instance, "GitHub issue creation", external, "\nIssue title: Original issue");
+    answerConfirmation(instance, "Approve");
     const changed = { toolName: "write", input: { ...original.input, i: "retry changed issue", content: JSON.stringify({ op: "issue_create", repo: external, title: "Changed issue" }) } };
     const result = await instance.handler(changed, context(repository));
     expect(result).toMatchObject({ reason: expect.stringContaining("does not match this exact retry") });
@@ -379,7 +379,7 @@ test("when an approved destination changes, rejects the retry", async () => {
     const original = { toolName: "write", input: { i: "create issue", path: "xd://github", content: JSON.stringify({ op: "issue_create", repo: external, title: "Repository-bound issue" }) } };
     // Act / Assert
     await instance.handler(original, context(repository));
-    approve(instance, "GitHub issue creation", external, "\nIssue title: Repository-bound issue");
+    answerConfirmation(instance, "Approve");
     const changed = { toolName: "write", input: { ...original.input, i: "retry another repository", content: JSON.stringify({ op: "issue_create", repo: "elsewhere/other-example", title: "Repository-bound issue" }) } };
     const result = await instance.handler(changed, context(repository));
     expect(result).toMatchObject({ reason: expect.stringContaining("does not match this exact retry") });
@@ -448,7 +448,7 @@ test("when the endpoint repository is approved despite a different target in the
   const instance = guard();
   try {
     await instance.handler(issueWithRepositoryInBody, context(repository));
-    approve(instance, "GitHub API write", endpointRepository);
+    answerConfirmation(instance, "Approve");
 
     // Act / Assert
     expect(await instance.handler(issueWithRepositoryInBody, context(repository))).toBeUndefined();
@@ -613,7 +613,7 @@ test("when the plugin reloads, discards its in-memory approval", async () => {
   try {
     const first = guard();
     await first.handler(event, context(repository));
-    approve(first, "GitHub issue creation", external);
+    answerConfirmation(first, "Approve");
 
     const reloaded = guard();
     // Act / Assert
@@ -633,7 +633,7 @@ test("when a locally approved invocation is retried after reload, sends one new 
   try {
     const first = guard();
     await first.handler(event, context(repository));
-    approve(first, "GitHub issue creation", external);
+    answerConfirmation(first, "Approve");
     const reloaded = guard();
 
     // Act
@@ -647,16 +647,6 @@ test("when a locally approved invocation is retried after reload, sends one new 
     rmSync(repository, { recursive: true, force: true });
   }
 });
-
-function requestedAsk(message: string | undefined): { html: string } {
-  if (!message) {
-    throw new Error("missing confirmation request");
-  }
-
-  const start = message.indexOf("{");
-  const end = message.indexOf("}. If approved", start) + 1;
-  return JSON.parse(message.slice(start, end)) as { html: string };
-}
 
 function recordExternalApproval(instance: Guard, question: string): void {
   instance.answer({

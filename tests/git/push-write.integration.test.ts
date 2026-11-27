@@ -6,7 +6,7 @@ import { join, relative } from "node:path";
 import { expect, test } from "bun:test";
 
 import { repositoryMutationHandoff } from "../../index.ts";
-import { approve, checkout, context, external, guard } from "../extension/test-support.ts";
+import { answerConfirmation, checkout, context, external, guard } from "../extension/test-support.ts";
 
 test("when pushing to the same origin, allows the push", async () => {
   // Arrange
@@ -81,7 +81,7 @@ test("when an external push is approved, allows one retry", async () => {
     const event = { toolName: "bash", input: { command: `git push https://github.com/${external}.git HEAD` } };
     // Act
     await instance.handler(event, context(repository));
-    approve(instance, "git push", external, `\nCommand: ${event.input.command}`);
+    answerConfirmation(instance, "Approve");
     // Act
     const result = await instance.handler(event, context(repository));
     // Assert
@@ -157,7 +157,7 @@ test("when an external push changes, requires new approval", async () => {
     const changed = { toolName: "bash", input: { command: `git push --force https://github.com/${external}.git HEAD` } };
     // Act
     await instance.handler(original, context(repository));
-    approve(instance, "git push", external, `\nCommand: ${original.input.command}`);
+    answerConfirmation(instance, "Approve");
     // Act
     const result = await instance.handler(changed, context(repository));
     // Assert
@@ -240,7 +240,7 @@ test("when an approved push is retried twice, consumes approval once", async () 
     const event = { toolName: "bash", input: { command: `git push https://github.com/${external}.git HEAD` } };
     // Act
     await instance.handler(event, context(repository));
-    approve(instance, "git push", external, `\nCommand: ${event.input.command}`);
+    answerConfirmation(instance, "Approve");
     // Act
     await instance.handler(event, context(repository));
     const result = await instance.handler(event, context(repository));
@@ -264,7 +264,7 @@ test("when the default push remote changes, requires fresh approval", async () =
     // Act / Assert
     expect(await instance.handler(event, context(repository))).toMatchObject({ block: true });
 
-    approve(instance, "git push", external, "\nCommand: git push");
+    answerConfirmation(instance, "Approve");
     execFileSync("git", ["-C", repository, "remote", "set-url", "deploy", `https://github.com/${changed}.git`]);
     // Act / Assert
     expect(await instance.handler(event, context(repository))).toMatchObject({ block: true });
@@ -285,7 +285,7 @@ test("when a push moves to another session directory, requires approval", async 
     const event = { toolName: "bash", input: { command: `git push https://github.com/${external}.git HEAD` } };
     // Act
     await instance.handler(event, context(repository));
-    approve(instance, "git push", external, `\nCommand: ${event.input.command}`);
+    answerConfirmation(instance, "Approve");
     // Act
     const result = await instance.handler(event, context(sibling));
     // Assert
@@ -306,7 +306,7 @@ test("when an allowed call runs in a sibling checkout, retains no approval", asy
     const event = { toolName: "bash", input: { command: `git push https://github.com/${external}.git HEAD` } };
     // Act
     await instance.handler(event, context(repository));
-    approve(instance, "git push", external, `\nCommand: ${event.input.command}`);
+    answerConfirmation(instance, "Approve");
     // Act / Assert
 
     expect(await instance.handler({ toolName: "bash", input: { command: "git status --short" } }, context(sibling))).toBeUndefined();

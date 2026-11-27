@@ -7,7 +7,7 @@ import {
   createPolicyState,
   reviewPolicy,
 } from "../../index.ts";
-import { approve, checkout, context, guard } from "./test-support.ts";
+import { answerConfirmation, checkout, context, guard } from "./test-support.ts";
 
 const policy = activateReviewedPolicy(reviewPolicy(createPolicyState({
   name: "work",
@@ -44,7 +44,7 @@ test("asks for high-risk outside classification and preserves exact retry safety
     const event = { toolName: "bash", input: { command } };
     expect(await instance.handler(event, context(repository))).toMatchObject({ block: true });
     expect(instance.messages).toHaveLength(1);
-    approve(instance, "GitHub issue creation", "target");
+    answerConfirmation(instance, "Approve");
     expect(await instance.handler(event, context(repository))).toBeUndefined();
     expect(await instance.handler({ toolName: "bash", input: { command: `${command} --body changed` } }, context(repository))).toMatchObject({ block: true });
   } finally {

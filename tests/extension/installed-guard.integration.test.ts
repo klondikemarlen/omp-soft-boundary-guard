@@ -12,24 +12,12 @@ import {
   current,
   external,
   installedGuard,
+  requestedAsk,
   type Guard,
 } from "./test-support.ts";
 
-type AskPayload = { html: string };
-
-function askPayload(instance: Guard): AskPayload {
-  const message = instance.messages.at(-1);
-  if (!message) {
-    throw new Error("missing confirmation request");
-  }
-
-  const start = message.indexOf("{");
-  const end = message.indexOf("}. If approved", start) + 1;
-  return JSON.parse(message.slice(start, end)) as AskPayload;
-}
-
 function answer(instance: Guard, selection: "Approve" | "Reject"): void {
-  const input = askPayload(instance);
+  const input = requestedAsk(instance.messages.at(-1));
   instance.answer({
     toolName: "ask",
     input,
@@ -118,7 +106,7 @@ describe("installed default GitHub enforcement", () => {
       await instance.handler(event, context(repository));
 
       // Assert
-      expect(askPayload(instance).html).toContain(`Current repository: ${current}\nTarget repository: ${upstream}`);
+      expect(requestedAsk(instance.messages.at(-1)).html).toContain(`Current repository: ${current}\nTarget repository: ${upstream}`);
     });
 
     test("when the revised upstream Python issue is declined, keeps the exact retry blocked without requesting approval again", async () => {
@@ -191,7 +179,7 @@ describe("installed default GitHub enforcement", () => {
       await instance.handler(changed, context(repository));
 
       // Assert
-      expect(askPayload(instance).html).toContain(`Command: ${Bun.escapeHTML(changed.input.command)}`);
+      expect(requestedAsk(instance.messages.at(-1)).html).toContain(`Command: ${Bun.escapeHTML(changed.input.command)}`);
     });
 
     test("when gh issue create omits --repo and gh defaults to upstream, blocks the implicit external destination", async () => {

@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { relative, resolve } from "node:path";
 
 import { currentCheckoutRepository } from "../../index.ts";
-import { approve, checkout, checkoutOutsideTemporaryDirectory, context, current, external, guard } from "../extension/test-support.ts";
+import { answerConfirmation, checkout, checkoutOutsideTemporaryDirectory, context, current, external, guard } from "../extension/test-support.ts";
 
 test("when invoked below a checkout root, resolves the same origin", () => {
   // Arrange
@@ -178,7 +178,7 @@ test("when an external write is approved, permits its retry", async () => {
     const event = { toolName: "write", input: { path: target, content: "export {};\n" } };
     // Act
     await instance.handler(event, context(repository));
-    approve(instance, "file write", target);
+    answerConfirmation(instance, "Approve");
     const retry = await instance.handler(event, context(repository));
     // Assert
     expect(retry).toBeUndefined();
@@ -231,12 +231,11 @@ test("when an external symlink write is approved, permits its retry", async () =
   const otherCheckout = checkoutOutsideTemporaryDirectory(`git@github.com:${external}.git`);
   try {
     symlinkSync(otherCheckout, `${repository}/outside`);
-    const target = `${otherCheckout}/created.ts`;
     const event = { toolName: "write", input: { path: "outside/created.ts", content: "export {};\n" } };
     const instance = guard();
     // Act
     await instance.handler(event, context(repository));
-    approve(instance, "file write", target);
+    answerConfirmation(instance, "Approve");
     const retry = await instance.handler(event, context(repository));
     // Assert
     expect(retry).toBeUndefined();
@@ -330,7 +329,6 @@ test("when an outbound move is approved, permits its retry", async () => {
   // Arrange
   const otherCheckout = checkoutOutsideTemporaryDirectory(`git@github.com:${external}.git`);
   const repository = checkout();
-  const destination = `${otherCheckout}/moved.ts`;
   try {
     writeFileSync(`${repository}/inside.ts`, "export {};\n");
     const event = {
@@ -340,7 +338,7 @@ test("when an outbound move is approved, permits its retry", async () => {
     const instance = guard();
     // Act
     await instance.handler(event, context(repository));
-    approve(instance, "file edit", destination);
+    answerConfirmation(instance, "Approve");
     const result = await instance.handler(event, context(repository));
     // Assert
     expect(result).toBeUndefined();
@@ -385,7 +383,7 @@ test("when an inbound move is approved, permits its retry", async () => {
     const instance = guard();
     // Act
     await instance.handler(event, context(repository));
-    approve(instance, "file edit", source);
+    answerConfirmation(instance, "Approve");
     const result = await instance.handler(event, context(repository));
     // Assert
     expect(result).toBeUndefined();

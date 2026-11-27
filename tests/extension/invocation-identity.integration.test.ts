@@ -2,7 +2,7 @@ import { rmSync } from "node:fs";
 
 import { afterAll, expect, test } from "bun:test";
 
-import { approve, checkout, context, installedGuard } from "./test-support.ts";
+import { answerConfirmation, checkout, context, installedGuard } from "./test-support.ts";
 
 const repository = checkout();
 
@@ -15,7 +15,7 @@ test("when nested object keys are reordered, preserves the one-shot approval", a
   const original = { toolName: "bash", input: { command, ready: { host: "127.0.0.1", port: 3000 } } };
   // Act
   await instance.handler(original, context(repository));
-  approve(instance, "GitHub API write", "elsewhere/example");
+  answerConfirmation(instance, "Approve");
 
   const retry = { toolName: "bash", input: { command, ready: { port: 3000, host: "127.0.0.1" } } };
   // Act / Assert
@@ -30,7 +30,7 @@ test("when only the display title changes, preserves one-shot Python approval", 
   const original = { toolName: "eval", input: { language: "py", code, title: "Inspecting publication" } };
   // Act
   await instance.handler(original, context(repository));
-  approve(instance, "GitHub API write", "elsewhere/example");
+  answerConfirmation(instance, "Approve");
 
   const retry = { toolName: "eval", input: { language: "py", code, title: "Retrying approved publication" } };
   // Act / Assert
@@ -51,7 +51,7 @@ test("when Python code changes, does not treat it as presentation metadata", asy
   };
   // Act
   await instance.handler(original, context(repository));
-  approve(instance, "GitHub API write", "elsewhere/example");
+  answerConfirmation(instance, "Approve");
 
   const changed = {
     toolName: "eval",
@@ -72,7 +72,7 @@ test("when a nested execution value changes, requires fresh approval", async () 
   const original = { toolName: "bash", input: { command, ready: { host: "127.0.0.1", port: 3000 } } };
   // Act
   await instance.handler(original, context(repository));
-  approve(instance, "GitHub API write", "elsewhere/example");
+  answerConfirmation(instance, "Approve");
 
   const changed = { toolName: "bash", input: { command, ready: { host: "127.0.0.1", port: 4000 } } };
   // Act / Assert

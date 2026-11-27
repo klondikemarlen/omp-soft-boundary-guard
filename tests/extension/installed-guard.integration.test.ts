@@ -29,9 +29,10 @@ function askPayload(instance: Guard): AskPayload {
 }
 
 function answer(instance: Guard, selection: "Approve" | "Reject"): void {
+  const input = askPayload(instance);
   instance.answer({
     toolName: "ask",
-    input: askPayload(instance),
+    input,
     details: {
       answers: [
         {

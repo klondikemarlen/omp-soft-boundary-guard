@@ -87,7 +87,8 @@ test("when the native form result approves issue creation, permits the matching 
     const instance = guard();
     await instance.handler(event, context(repository));
     // Replay the native result against the requested HTML, not the capture's unrelated form.
-    instance.answer({ ...nativeAskApproval, input: requestedAsk(instance.messages[0]) });
+    const ask = requestedAsk(instance.messages[0]);
+    instance.answer({ ...nativeAskApproval, input: ask });
 
     // Act / Assert
     expect(await instance.handler(event, context(repository))).toBeUndefined();
@@ -103,7 +104,8 @@ test("when the matching retry consumes native approval, blocks the next issue cr
   const event = { toolName: "bash", input: { command: `gh issue create --repo ${external} --title "Approved locally"` } };
   try {
     await instance.handler(event, context(repository));
-    instance.answer({ ...nativeAskApproval, input: requestedAsk(instance.messages[0]) });
+    const ask = requestedAsk(instance.messages[0]);
+    instance.answer({ ...nativeAskApproval, input: ask });
     await instance.handler(event, context(repository));
 
     // Act / Assert

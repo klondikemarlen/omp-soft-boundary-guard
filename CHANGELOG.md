@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.1.16
+
+- Approval tests answer the actual pending form and check displayed destinations, control safety and retry decisions directly. This release changes no guard policy.
+
 ## 2.1.15
 
 - After a supported quoted issue-comment heredoc, the guard no longer infers a release directory through unsupported shell control flow. It still recognizes destinations that are explicit and do not depend on that directory.

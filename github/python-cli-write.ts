@@ -8,24 +8,6 @@ import type { GitHubWrite } from "./write.ts";
 type PythonNode = SyntaxNode;
 type SubprocessMethod = "run" | "check_output";
 
-const ISSUE_VALUE_OPTIONS: Record<string, "payload" | "literal"> = {
-  "--title": "payload",
-  "-t": "payload",
-  "--body": "payload",
-  "-b": "payload",
-  "--assignee": "literal",
-  "-a": "literal",
-  "--body-file": "literal",
-  "-F": "literal",
-  "--label": "literal",
-  "-l": "literal",
-  "--milestone": "literal",
-  "-m": "literal",
-  "--project": "literal",
-  "--repo": "literal",
-  "-R": "literal",
-};
-
 function children(node: PythonNode): PythonNode[] {
   const result: PythonNode[] = [];
   for (let child = node.firstChild; child; child = child.nextSibling) {
@@ -114,49 +96,25 @@ function argvWords(node: PythonNode, source: string): (string | undefined)[] | u
   return words.length ? words : undefined;
 }
 
-function issueCreationWithOpaquePayload(words: (string | undefined)[]): string[] | undefined {
-  const literalWords = ["gh", "issue", "create"];
-  for (let index = 3; index < words.length; index += 1) {
-    const option = words[index];
-    if (option === undefined) {
-      return undefined;
-    }
-
-    const equals = option.indexOf("=");
-    let optionName = option;
-    if (equals !== -1) {
-      optionName = option.slice(0, equals);
-    }
-
-    const valueKind = ISSUE_VALUE_OPTIONS[optionName];
-    if (valueKind !== "payload" && valueKind !== "literal") {
-      return undefined;
-    }
-
-    if (equals !== -1) {
-      literalWords.push(option);
-      continue;
-    }
-
-    if (index + 1 >= words.length) {
-      return undefined;
-    }
+function issueCreationWithOpaquePayload(words: (string | undefined)[]): (string | undefined)[] | undefined {
+  const cliWords: (string | undefined)[] = ["gh", "issue", "create"];
+  for (let index = 3; index < words.length; index += 2) {
+    const flag = words[index];
+    if (!flag || index + 1 >= words.length) return;
 
     const value = words[index + 1];
-    index += 1;
-    if (value !== undefined) {
-      literalWords.push(option, value);
-      continue;
-    }
-
-    if (valueKind !== "payload") {
+    if (flag === "--title" || flag === "-t" || flag === "--body" || flag === "-b") {
+      // Do not invent a title or body for the confirmation.
+      if (value !== undefined) {
+        cliWords.push(flag, value);
+      }
+    } else if (flag === "--repo" || flag === "-R" || (value !== undefined && (flag === "--label" || flag === "-l"))) {
+      cliWords.push(flag, value);
+    } else {
       return undefined;
     }
-
-    // Omit the data-only pair so the variable cannot affect repository or description inference.
   }
-
-  return literalWords;
+  return cliWords;
 }
 
 function allowedKeyword(name: string, value: PythonNode, source: string): boolean {
@@ -192,7 +150,7 @@ function subprocessMethod(call: PythonNode, source: string): SubprocessMethod | 
   return undefined;
 }
 
-function subprocessArgv(call: PythonNode, source: string): string[] | undefined {
+function subprocessArgv(call: PythonNode, source: string): (string | undefined)[] | undefined {
   const method = subprocessMethod(call, source);
   if (!method) {
     return undefined;

@@ -29,6 +29,21 @@ subprocess.run(["gh", "api", "--method", "POST", "repos/can1357/oh-my-pi/issues/
   });
 });
 
+test("when a Python issue destination is a variable, does not infer a repository from its payload", () => {
+  // Arrange
+  const code = `subprocess.check_output(["gh", "issue", "create", "--repo", destination, "--title", "elsewhere/project"], text=True)`;
+
+  // Act
+  const handoff = repositoryMutationHandoff({ toolName: "eval", input: { language: "py", code } }, repository);
+
+  // Assert
+  expect(handoff).toMatchObject({
+    decision: "allow",
+    action: "GitHub issue creation",
+    target: undefined,
+  });
+});
+
 test("when Python invokes a read-only API request, allows execution", () => {
   // Arrange
   const code = `import subprocess

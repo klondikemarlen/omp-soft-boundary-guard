@@ -12,10 +12,13 @@ test("when a quoted Python heredoc is the whole command, preserves the source ve
 });
 
 test.each([
-  ["the shell expands the body", "python <<END\nprint(1)\nEND"],
-  ["the delimiter is missing", "python <<'END'\nprint(1)"],
-  ["another command follows the delimiter", "python3 <<'END'\nprint(1)\nEND\nprintf done"],
-])("when %s, does not treat the whole command as literal Python", (_scenario, command) => {
+  { condition: "the shell expands the body", header: "python <<END", trailer: "\nEND" },
+  { condition: "the delimiter is missing", header: "python <<'END'", trailer: "" },
+  { condition: "another command follows", header: "python3 <<'END'", trailer: "\nEND\nprintf done" },
+])("when $condition, does not treat the whole command as literal Python", ({ header, trailer }) => {
+  // Arrange
+  const command = `${header}\nprint(1)${trailer}`;
+
   // Act / Assert
   expect(pythonHeredocSource(command)).toBeUndefined();
 });

@@ -193,6 +193,127 @@ test("when a nested shell changes checkout before release, resolves that target"
   }
 });
 
+test("when a quoted issue comment is followed by a simple directory change and release, resolves the release checkout", () => {
+  // Arrange
+  const sessionCheckout = checkout(currentRepository);
+  const targetCheckout = checkout(externalRepository);
+  const command = [
+    "gh issue comment 354 --body-file - <<'COMMENT'",
+    "Synthetic comment.",
+    "COMMENT",
+    `cd ${targetCheckout} && npm run release`,
+  ].join("\n");
+
+  try {
+    // Act
+    const handoff = releaseHandoff({
+      toolName: "bash",
+      input: { command },
+    }, sessionCheckout);
+
+    // Assert
+    expect(handoff).toMatchObject({
+      decision: "ask",
+      category: "release",
+      target: externalRepository,
+    });
+  } finally {
+    rmSync(sessionCheckout, { recursive: true, force: true });
+    rmSync(targetCheckout, { recursive: true, force: true });
+  }
+});
+
+test("when a directory change is inside a conditional after a quoted issue comment, does not assign its checkout to a release", () => {
+  // Arrange
+  const sessionCheckout = checkout(currentRepository);
+  const targetCheckout = checkout(externalRepository);
+  const command = [
+    "gh issue comment 354 --body-file - <<'COMMENT'",
+    "Synthetic comment.",
+    "COMMENT",
+    "git status --short; if false; then",
+    `  cd ${targetCheckout}`,
+    "fi",
+    "npm run release",
+  ].join("\n");
+
+  try {
+    // Act
+    const handoff = releaseHandoff({
+      toolName: "bash",
+      input: { command },
+    }, sessionCheckout);
+
+    // Assert
+    expect(handoff).toEqual({ decision: "allow" });
+  } finally {
+    rmSync(sessionCheckout, { recursive: true, force: true });
+    rmSync(targetCheckout, { recursive: true, force: true });
+  }
+});
+
+test("when a release still names an external repository after unsupported syntax, preserves the explicit destination", () => {
+  // Arrange
+  const repository = checkout(currentRepository);
+  const command = [
+    "gh issue comment 354 --body-file - <<'COMMENT'",
+    "Synthetic comment.",
+    "COMMENT",
+    `(cd /tmp); npm run release -- --repo ${externalRepository}`,
+  ].join("\n");
+
+  try {
+    // Act
+    const handoff = releaseHandoff({
+      toolName: "bash",
+      input: {
+        command,
+      },
+    }, repository);
+
+    // Assert
+    expect(handoff).toMatchObject({
+      decision: "ask",
+      category: "release",
+      target: externalRepository,
+    });
+  } finally {
+    rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test("when a conditional suffix contains a second GitHub write, keeps the combined destination unresolved", () => {
+  // Arrange
+  const repository = checkout(currentRepository);
+  const command = [
+    `gh issue comment 354 --repo ${externalRepository} --body-file - <<'COMMENT'`,
+    "Synthetic comment.",
+    "COMMENT",
+    "if false; then",
+    `  gh issue reopen 354 --repo ${externalRepository}`,
+    "fi",
+  ].join("\n");
+
+  try {
+    // Act
+    const handoff = repositoryMutationHandoff({
+      toolName: "bash",
+      input: {
+        command,
+      },
+    }, repository);
+
+    // Assert
+    expect(handoff).toMatchObject({
+      decision: "allow",
+      action: "GitHub write",
+      target: undefined,
+    });
+  } finally {
+    rmSync(repository, { recursive: true, force: true });
+  }
+});
+
 test("when an explicit owned release is followed by a nested release in another checkout, describes both destinations", () => {
   // Arrange
   const sessionCheckout = checkout(currentRepository);

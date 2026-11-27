@@ -6,11 +6,16 @@ const REDIRECTIONS: Record<string, true> = { "<": true, ">": true, ">>": true, "
 // Only split the heredoc form we can recognize without interpreting shell code.
 const ISSUE_COMMENT_HEREDOC = /^([ \t]*gh[ \t]+issue[ \t]+comment[ \t][^\n]*)<<[ \t]*(['"])([A-Za-z_][A-Za-z0-9_]*)\2[ \t]*\n/;
 const SIMPLE_SHELL_LINE = /^(?:[^'"`$\\#{}()<\r\n]|<(?!<)|'[^'\r\n]*'|"[^"`$\\\r\n]*")*$/;
-
+const COMPOUND_COMMAND_WORDS = new Set([
+  "if", "then", "elif", "else", "fi",
+  "for", "select", "while", "until", "do", "done",
+  "case", "esac", "function", "coproc", "time", "!", "[[",
+]);
 
 export type ShellCommandSegment = {
   words: (string | undefined)[];
   nextOperator?: string;
+  cwdUncertain?: true;
 };
 
 export function shellCommandSegments(command: string): ShellCommandSegment[] {
@@ -53,22 +58,47 @@ function issueCommentSegments(command: string): ShellCommandSegment[] | undefine
     return undefined;
   }
 
-  // shell-quote does not emit a boundary for a newline. Here each trailing
-  // line must stand on its own lexically; otherwise keep the existing parser path.
-  const trailingCommands = command.slice(closing.lastIndex);
-  for (const line of trailingCommands.split("\n")) {
+  const trailingLines = command.slice(closing.lastIndex).split("\n");
+
+  for (let index = 0; index < trailingLines.length; index += 1) {
+    const line = trailingLines[index];
     if (/^[ \t]*(?:#.*)?$/.test(line)) {
       continue;
     }
 
-    if (!SIMPLE_SHELL_LINE.test(line)) {
-      return undefined;
+    // Use the ordinary tokenizer on the remaining suffix when line breaks
+    // cannot safely be treated as boundaries. Never feed it the comment body.
+    const isSimpleLine = SIMPLE_SHELL_LINE.test(line);
+    let source = line;
+    if (!isSimpleLine) {
+      source = trailingLines.slice(index).join("\n");
     }
 
-    const lineSegments = tokenizedSegments(line);
+    let lineSegments: ShellCommandSegment[];
+    try {
+      lineSegments = tokenizedSegments(source);
+    } catch {
+      break;
+    }
+
+    let uncertainSegment: ShellCommandSegment | undefined;
+    if (isSimpleLine) {
+      uncertainSegment = lineSegments.find(({ words: [firstWord] }) =>
+        firstWord !== undefined && COMPOUND_COMMAND_WORDS.has(firstWord),
+      );
+    } else {
+      uncertainSegment = lineSegments[0];
+    }
+    if (uncertainSegment) {
+      uncertainSegment.cwdUncertain = true;
+    }
+
     if (lineSegments.length) {
       segments[segments.length - 1].nextOperator ??= ";";
       segments.push(...lineSegments);
+    }
+    if (!isSimpleLine) {
+      break;
     }
   }
 

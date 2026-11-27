@@ -8,7 +8,7 @@ Opt-in OMP extension that requires one-shot approval for recognized external Git
 - Mutating Git commands that resolve to a local checkout, including `git push`.
 - `gh issue` creation and updates, `gh pr` creation and updates, and mutating `gh api` requests.
 - Supported `xd://github` issue and pull-request writes.
-- Python `eval` calls containing direct `subprocess.run([...])` GitHub CLI invocations with literal argv.
+- Supported Python GitHub CLI calls submitted through `eval` or a standalone quoted Python heredoc.
 
 When the active checkout and target resolve to different GitHub repositories, the installed extension blocks recognized GitHub writes before execution and requests the standard OMP Ask. The question shows the destination and command or Python code. Rejecting keeps that invocation blocked; approving permits one exact retry. Other recognized external mutations log a warning and proceed. Same-boundary mutations remain silent unless a reviewed policy produces an advisory warning.
 
@@ -19,7 +19,9 @@ The current built-in boundary is the invoking session's normalized GitHub `origi
 
 For recognized `xd://github` mutations that omit `repo`, the guard pins the tool's execution input to that normalized `origin`. This prevents another resolver from silently selecting a distinct configured remote such as `upstream`; explicit external repositories follow the installed approval path.
 
-Python recognition parses syntax without executing the supplied code or requiring a Python interpreter. It supports direct `subprocess.run` calls with a literal list of plain, unescaped string arguments, optional `input` supplied as a variable, and boolean `check`, `capture_output`, and `text` keywords. Aliases, dynamic argv, unsupported subprocess options, malformed code, and multiple recognized writes remain unresolved and fail open. Calls hidden inside Python strings or comments are not treated as executable writes.
+Shell recognition supports a leading `gh issue comment` that reads stdin with `--body-file -` or `--body-file=-` and a single- or double-quoted heredoc delimiter. The comment body is opaque. The guard inspects following simple commands, such as a read-back. At unsupported shell syntax it stops tracking the working directory, but can still recognize explicit destinations that do not depend on it. Multiple recognized GitHub writes in one call remain ambiguous and fail open.
+
+Python recognition parses submitted `eval` code or the body of a standalone quoted `python` or `python3` heredoc without executing it or requiring a Python interpreter. It supports direct `subprocess.run` calls with a list of plain, unescaped string arguments, optional `input` supplied as a variable, and boolean `check`, `capture_output`, and `text` keywords. For `gh issue create` it also supports direct `subprocess.check_output` with `text=True` and allows simple variables for title and body; the destination must still be resolved separately. Aliases, unsupported dynamic arguments or subprocess options, malformed code, and multiple recognized writes fail open when unresolved. Python strings and comments are not treated as executable writes.
 
 ## Native Folder Approvals
 
@@ -66,7 +68,7 @@ Approvals are held only in process memory; a plugin reload clears them, and a ne
 
 Cache lookup and authorization use the same canonical invocation identity. Object-key ordering and top-level tool intent `i` are ignored, as is `eval`'s top-level display `title`. Execution values, code, array order, and nested fields named `i` or `title` remain bound to approval.
 
-Exact approval binds the submitted tool input, including Python code, not the contents of mutable Python globals, environment variables, stdin sources, or external files. Review those payload sources before approving; their runtime values are not inspected or snapshotted by the guard.
+Exact approval binds the submitted tool input, including the Bash command with its inline heredoc body or the `eval` code as submitted. It does not bind the contents of mutable Python globals, environment variables, separate stdin sources, or external files. Review those payload sources before approving; their runtime values are not inspected or snapshotted by the guard.
 
 Release, deploy, publish, and promote commands—including repository wrappers, package scripts, nested shell commands, and GitHub release writes—are soft-boundary checks. Release targets come from the recognized release segment's execution checkout unless an explicit target is supplied. A release targeting the current checkout's resolved `klondikemarlen/*` GitHub origin is inside the built-in boundary and remains silently allowed, including under an active reviewed policy. Other resolved targets log a concise soft warning and proceed. Release classification never exempts another recognized external mutation in the same compound command. Programmatic strict mode reports the full command and requests the exact Ask when UI is available; without UI, the underlying operation proceeds.
 

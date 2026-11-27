@@ -80,6 +80,7 @@ test("when a quoted issue comment heredoc ends, retains every subsequent shell s
     "gh issue comment 354 --body-file - <<'COMMENT'",
     "COMMENT is the delimiter only when it is alone on a line.",
     "Run `/verifier`; don't add it to the command arguments.",
+    "cd /tmp/comment-body",
     "COMMENT",
     "gh issue view 354 --comments",
     "cd /tmp/elsewhere && git status --short",
@@ -94,5 +95,27 @@ test("when a quoted issue comment heredoc ends, retains every subsequent shell s
     { words: ["gh", "issue", "view", "354", "--comments"], cwd: "/workspace", nextOperator: ";" },
     { words: ["cd", "/tmp/elsewhere"], cwd: "/workspace", nextOperator: "&&" },
     { words: ["git", "status", "--short"], cwd: "/tmp/elsewhere", nextOperator: undefined },
+  ]);
+});
+
+test("when unsupported shell syntax follows a quoted issue comment, keeps later segments without a definite directory", () => {
+  // Arrange
+  const command = [
+    "gh issue comment 354 --body-file - <<'COMMENT'",
+    "Synthetic comment.",
+    "COMMENT",
+    "git status --short",
+    "(cd /tmp/elsewhere); git status --short",
+  ].join("\n");
+
+  // Act
+  const segments = shellExecutionSegments({ command }, "/workspace");
+
+  // Assert
+  expect(segments.map(({ words, cwd }) => [words, cwd])).toEqual([
+    [["gh", "issue", "comment", "354", "--body-file", "-"], "/workspace"],
+    [["git", "status", "--short"], "/workspace"],
+    [["cd", "/tmp/elsewhere"], undefined],
+    [["git", "status", "--short"], undefined],
   ]);
 });

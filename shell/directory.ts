@@ -53,6 +53,10 @@ export function shellExecutionSegments(input: ToolInput, sessionCwd: string): Sh
   const segments: ShellExecutionSegment[] = [];
 
   for (const segment of shellCommandSegments(input.command)) {
+    if (segment.cwdUncertain) {
+      cwd = undefined;
+    }
+
     segments.push({ ...segment, cwd });
     if (cwd !== undefined) {
       cwd = changedDirectory(segment.words, cwd);

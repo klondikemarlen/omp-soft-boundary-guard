@@ -73,7 +73,7 @@ test("when invoked in a worktree, resolves its origin", () => {
 test("when worktrees have no remote, permits mutations within their shared repository", async () => {
   // Arrange
   const repository = checkout(null);
-  const worktree = `/tmp/omp-soft-boundary-guard-${crypto.randomUUID()}`;
+  const worktree = resolve(`omp-soft-boundary-guard-${crypto.randomUUID()}`);
   const nested = `${repository}/nested`;
   try {
     execFileSync("git", ["-C", repository, "-c", "user.name=Guard", "-c", "user.email=guard@example.test", "commit", "--allow-empty", "-m", "initial"]);
@@ -89,6 +89,25 @@ test("when worktrees have no remote, permits mutations within their shared repos
     expect([result, instance.messages]).toEqual([undefined, []]);
   } finally {
     rmSync(worktree, { recursive: true, force: true });
+    rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test("when a write targets an independent repository without an origin, requires approval", async () => {
+  // Arrange
+  const repository = checkout(null);
+  const otherCheckout = checkoutOutsideTemporaryDirectory(null);
+  try {
+    const target = `${otherCheckout}/outside.ts`;
+    // Act
+    const result = await guard().handler(
+      { toolName: "write", input: { path: target, content: "export {};\n" } },
+      context(repository),
+    );
+    // Assert
+    expect(result).toMatchObject({ block: true });
+  } finally {
+    rmSync(otherCheckout, { recursive: true, force: true });
     rmSync(repository, { recursive: true, force: true });
   }
 });
@@ -249,7 +268,7 @@ test("when a symlink write targets another repository, requires approval", async
 test("when a move stays within one repository, permits it", async () => {
   // Arrange
   const repository = checkout();
-  const sameRepositoryCheckout = checkout();
+  const sameRepositoryCheckout = checkoutOutsideTemporaryDirectory();
   try {
     writeFileSync(`${repository}/inside.ts`, "export {};\n");
     const destination = relative(repository, sameRepositoryCheckout);

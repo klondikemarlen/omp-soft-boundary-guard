@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.1.12
+
+- Handoff CLI tests now exercise the supplied checkout and the process-directory fallback without requiring the developer's checkout to have a GitHub origin. Guard behavior is unchanged.
+
 ## 2.1.11
 
 - Release checks compare the candidate with the highest stable version tag available locally, including tags outside the current branch. Nonrelease tags are ignored; a failed Git query stops the check.

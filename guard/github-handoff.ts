@@ -4,6 +4,7 @@ import { defaultPushRemote } from "../git/default-push-remote.ts";
 import { pushRepository } from "../git/push-repository.ts";
 import { gitPushWrite } from "../git/push-write.ts";
 import { pinGitHubDeviceRepository } from "../github/device-write.ts";
+import { implicitIssueRepository } from "../github/implicit-issue-repository.ts";
 import { pythonGitHubCliWrites } from "../github/python-cli-write.ts";
 import { remoteRepository } from "../github/remote-repository.ts";
 import { recognizedGitHubWrite } from "../github/recognized-write.ts";
@@ -15,22 +16,20 @@ import { guardDecision } from "./decision.ts";
 type LocatedGitHubWrite = {
   write: GitHubWrite;
   cwd?: string;
+  shellWords?: (string | undefined)[];
 };
 
-function writeFor(event: ToolCallEvent, sessionCwd: string): LocatedGitHubWrite | undefined {
-  if (event.toolName === "write") {
-    const write = recognizedGitHubWrite(event.input);
-    return write ? { write, cwd: toolDirectory(event.input, sessionCwd) ?? sessionCwd } : undefined;
-  }
-
-  if (event.toolName === "eval") {
-    const code = event.input.code;
-    if (event.input.language !== "py" || typeof code !== "string") {
-      return undefined;
+function writeFor(event: ToolCallEvent, sessionCwd: string, pythonSource?: string): LocatedGitHubWrite | undefined {
+  if (pythonSource !== undefined || event.toolName === "write") {
+    let write: GitHubWrite | undefined;
+    if (pythonSource !== undefined) {
+      write = pythonGitHubCliWrites(event.input, pythonSource);
+    } else {
+      write = recognizedGitHubWrite(event.input);
     }
+    if (!write) return;
 
-    const write = pythonGitHubCliWrites(event.input, code);
-    return write ? { write, cwd: toolDirectory(event.input, sessionCwd) ?? sessionCwd } : undefined;
+    return { write, cwd: toolDirectory(event.input, sessionCwd) ?? sessionCwd };
   }
 
   if (event.toolName !== "bash" || typeof event.input.command !== "string") {
@@ -48,13 +47,13 @@ function writeFor(event: ToolCallEvent, sessionCwd: string): LocatedGitHubWrite 
       return { write: { action: "GitHub write", targetUnresolved: true } };
     }
 
-    locatedWrite = { write, cwd: segment.cwd };
+    locatedWrite = { write, cwd: segment.cwd, shellWords: segment.words };
   }
   return locatedWrite;
 }
 
-export function githubHandoff(event: ToolCallEvent, cwd: string): RepositoryMutationHandoff {
-  const located = writeFor(event, cwd);
+export function githubHandoff(event: ToolCallEvent, cwd: string, pythonSource?: string): RepositoryMutationHandoff {
+  const located = writeFor(event, cwd, pythonSource);
   if (!located) {
     return { decision: "allow" };
   }
@@ -72,10 +71,25 @@ export function githubHandoff(event: ToolCallEvent, cwd: string): RepositoryMuta
   }
 
   if (write.action !== "git push" && !write.target && !write.targetUnresolved && commandCwd !== undefined) {
-    write.target = currentCheckoutRepository(commandCwd);
+    if (event.toolName !== "write" && write.action === "GitHub issue creation") {
+      // Heredoc stdin is not a terminal. Named Bash services otherwise
+      // default to a PTY, unlike ordinary finite Bash calls.
+      const nonInteractive = event.toolName === "bash" && (
+        pythonSource !== undefined || event.input.pty === false ||
+        (event.input.pty !== true && !event.input.name)
+      );
+      write.target = implicitIssueRepository(commandCwd, { shellWords: located.shellWords, nonInteractive });
+      write.targetUnresolved = !write.target;
+    } else {
+      write.target = currentCheckoutRepository(commandCwd);
+    }
   }
 
   const currentRepository = currentCheckoutRepository(cwd);
+  if (write.action === "GitHub issue creation" && write.targetUnresolved) {
+    return { decision: "allow", action: write.action, currentRepository, target: undefined };
+  }
+
   const revisedInput = write.target ? pinGitHubDeviceRepository(event.input, write.target) : undefined;
   const decision = guardDecision(write, currentRepository);
   if (decision.allow) {

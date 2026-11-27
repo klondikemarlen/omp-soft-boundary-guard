@@ -119,6 +119,7 @@ function recordClassification(
 
 function recordGuardFailure(recorder: AdvisoryRecorder | undefined, event: { toolName: string }): void {
   try {
+    console.warn(`Soft boundary fail-open: guard unavailable for ${event.toolName}.`);
     recorder?.record({
       action: event.toolName,
       classification: "uncertain",
@@ -156,7 +157,10 @@ function requestConfirmation(
   revisedInput?: ToolInput,
 ): ToolCallResult {
   const reason = confirmationReason(handoff, event);
-  if (!hasUI) return inputResult(revisedInput);
+  if (!hasUI) {
+    console.warn(`Soft boundary fail-open: approval UI unavailable for ${handoff.action} targeting ${handoff.target}.`);
+    return inputResult(revisedInput);
+  }
 
   const authorizationResult = authorization.consume(handoff.fingerprint);
   if (authorizationResult === "authorized") return inputResult(revisedInput);
@@ -237,6 +241,9 @@ export function createRepositoryBoundaryGuard(options: BoundaryGuardOptions = {}
           const enforcePolicy = options.enforce === true;
           const outcome = needsWarning && context.hasUI && enforcePolicy ? "asked" : "allowed";
           recordClassification(options.recorder, handoff, result, outcome);
+          if (classification === undefined) {
+            console.warn(`Soft boundary fail-open: classifier unavailable for ${handoff.action}.`);
+          }
 
           if (needsWarning && enforcePolicy) {
             handoff = policyAskHandoff(handoff, event, context.cwd);
@@ -246,7 +253,12 @@ export function createRepositoryBoundaryGuard(options: BoundaryGuardOptions = {}
           }
         }
 
-        if (handoff.decision === "allow") return inputResult(revisedInput);
+        if (handoff.decision === "allow") {
+          if (handoff.action === "GitHub issue creation" && (!handoff.currentRepository || !handoff.target)) {
+            console.warn("Soft boundary fail-open: issue destination or invoking repository unresolved.");
+          }
+          return inputResult(revisedInput);
+        }
         if (!shouldEnforce(options.enforce, handoff)) {
           console.warn(warningFor(handoff));
           return inputResult(revisedInput);

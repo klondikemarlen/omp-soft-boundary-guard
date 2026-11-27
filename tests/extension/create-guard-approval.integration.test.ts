@@ -2,9 +2,11 @@ import { mkdirSync, rmSync } from "node:fs";
 
 import { expect, test } from "bun:test";
 
-import { repositoryMutationHandoff } from "../../guard/handoff.ts";
+import type { ToolCallEvent } from "../../extension/contract.ts";
 import { nativeAskApproval } from "./native-ask-fixture.ts";
-import { approve, checkout, context, external, guard } from "./test-support.ts";
+import { approve, checkout, context, external, guard, type Guard } from "./test-support.ts";
+
+import { repositoryMutationHandoff } from "../../guard/handoff.ts";
 
 test("when confirmation is pending, does not reissue it", async () => {
   // Arrange
@@ -36,32 +38,81 @@ test("when another HTML form is approved, leaves the original confirmation pendi
       block: true,
       reason: expect.stringContaining("confirmation is already pending"),
     });
-    expect(instance.messages).toHaveLength(1);
   } finally {
     rmSync(repository, { recursive: true, force: true });
   }
 });
 
-test("when the native form result approves issue creation, permits exactly one retry", async () => {
+test("when another HTML form is approved, does not reissue the original prompt", async () => {
+  // Arrange
+  const repository = checkout();
+  const instance = guard();
+  const event = { toolName: "bash", input: { command: `gh issue create --repo ${external} --title "Unrelated approval"` } };
+  try {
+    await instance.handler(event, context(repository));
+    const originalPrompt = instance.messages[0];
+
+    // Act
+    instance.answer(nativeAskApproval);
+    await instance.handler(event, context(repository));
+
+    // Assert
+    expect(instance.messages).toEqual([originalPrompt]);
+  } finally {
+    rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test("when the native form has not yet been approved, blocks issue creation", async () => {
+  // Arrange
+  const repository = checkout();
+  const instance = guard();
+  const event = { toolName: "bash", input: { command: `gh issue create --repo ${external} --title "Approved locally"` } };
+  try {
+    // Act / Assert
+    expect(await instance.handler(event, context(repository))).toMatchObject({
+      block: true,
+      reason: expect.stringContaining("OMP ask confirmation requested"),
+    });
+  } finally {
+    rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test("when the native form result approves issue creation, permits the matching retry", async () => {
   // Arrange
   const repository = checkout();
   const event = { toolName: "bash", input: { command: `gh issue create --repo ${external} --title "Approved locally"` } };
   try {
     const instance = guard();
-    // Act / Assert
-    expect(await instance.handler(event, context(repository))).toMatchObject({ block: true });
-    const message = instance.messages[0]!;
-    const start = message.indexOf("{");
-    const end = message.indexOf("}. If approved", start) + 1;
-    const ask = JSON.parse(message.slice(start, end)) as Record<string, unknown>;
-    // Replay native result details against this request's generated HTML, not the capture's unrelated form.
-    instance.answer({
-      ...nativeAskApproval,
-      input: ask,
-    });
+    await instance.handler(event, context(repository));
+    // Replay the native result against the requested HTML, not the capture's unrelated form.
+    const ask = requestedAsk(instance.messages[0]);
+    instance.answer({ ...nativeAskApproval, input: ask });
 
+    // Act / Assert
     expect(await instance.handler(event, context(repository))).toBeUndefined();
-    expect(await instance.handler(event, context(repository))).toMatchObject({ block: true });
+  } finally {
+    rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test("when the matching retry consumes native approval, blocks the next issue creation", async () => {
+  // Arrange
+  const repository = checkout();
+  const instance = guard();
+  const event = { toolName: "bash", input: { command: `gh issue create --repo ${external} --title "Approved locally"` } };
+  try {
+    await instance.handler(event, context(repository));
+    const ask = requestedAsk(instance.messages[0]);
+    instance.answer({ ...nativeAskApproval, input: ask });
+    await instance.handler(event, context(repository));
+
+    // Act / Assert
+    expect(await instance.handler(event, context(repository))).toMatchObject({
+      block: true,
+      reason: expect.stringContaining("OMP ask confirmation requested"),
+    });
   } finally {
     rmSync(repository, { recursive: true, force: true });
   }
@@ -75,10 +126,10 @@ test("when retrying from a nested directory, preserves the approved checkout ide
   try {
     mkdirSync(nestedDirectory);
     const instance = guard();
-    // Act / Assert
-    expect(await instance.handler(event, context(repository))).toMatchObject({ block: true });
+    await instance.handler(event, context(repository));
     approve(instance, "GitHub issue creation", external);
 
+    // Act / Assert
     expect(await instance.handler(event, context(nestedDirectory))).toBeUndefined();
   } finally {
     rmSync(repository, { recursive: true, force: true });
@@ -112,21 +163,36 @@ test("when an external GitHub gate already approved, permits its matching retry"
   }
 });
 
-test("when external approval precedes the first retry, consumes it", async () => {
+test("when external approval precedes the first tool call, permits the matching API write", async () => {
   // Arrange
-  const repository = checkout(null);
+  const repository = checkout();
   const command = `gh api --method PATCH repos/${external}/issues/6458 -f body="$ISSUE_BODY" --jq .html_url`;
   try {
     const instance = guard();
+    recordExternalApproval(instance, `Allow one GitHub API write to ${external}?\nCommand: ${command}`);
+
     // Act / Assert
-    instance.answer({
-      toolName: "ask",
-      input: { questions: [{ id: "confirm_external_github_write", question: `Allow one GitHub API write to ${external}?\nCommand: ${command}` }] },
-      details: { selectedOptions: ["Approve"] },
-      isError: false,
+    expect(await instance.handler({ toolName: "bash", input: { command } }, context(repository))).toBeUndefined();
+  } finally {
+    rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test("when the first API write consumes early external approval, blocks the next write", async () => {
+  // Arrange
+  const repository = checkout();
+  const command = `gh api --method PATCH repos/${external}/issues/6458 -f body="$ISSUE_BODY" --jq .html_url`;
+  const event = { toolName: "bash", input: { command } };
+  try {
+    const instance = guard();
+    recordExternalApproval(instance, `Allow one GitHub API write to ${external}?\nCommand: ${command}`);
+    await instance.handler(event, context(repository));
+
+    // Act / Assert
+    expect(await instance.handler(event, context(repository))).toMatchObject({
+      block: true,
+      reason: expect.stringContaining("OMP ask confirmation requested"),
     });
-    const result = await instance.handler({ toolName: "bash", input: { command } }, context(repository));
-    expect(result).toBeUndefined();
   } finally {
     rmSync(repository, { recursive: true, force: true });
   }
@@ -156,22 +222,52 @@ test("when an API issue creation is equivalent, reuses external issue approval",
 test("when an API operation updates an issue, does not reuse creation approval", async () => {
   // Arrange
   const repository = checkout();
-  const updateCommand = `gh api repos/${external}/issues/12 --method PATCH -f body="Changed"`;
-  const createCommand = `gh api repos/${external}/issues --method POST -f title="Created" -f body="Body"`;
+  const update = { toolName: "bash", input: { command: `gh api repos/${external}/issues/12 --method PATCH -f body="Changed"` } };
   try {
     const instance = guard();
+    recordExternalApproval(instance, `Allow one GitHub issue creation in ${external}?`);
+
     // Act / Assert
-    instance.answer({
-      toolName: "ask",
-      input: {
-        questions: [{ id: "confirm_external_github_write", question: `Allow one GitHub issue creation in ${external}?` }],
-      },
-      details: { selectedOptions: ["Approve"] },
-      isError: false,
+    expect(await instance.handler(update, context(repository))).toMatchObject({
+      block: true,
+      reason: expect.stringContaining("OMP ask confirmation requested"),
     });
-    expect(await instance.handler({ toolName: "bash", input: { command: updateCommand } }, context(repository))).toMatchObject({ block: true });
-    expect(await instance.handler({ toolName: "bash", input: { command: createCommand } }, context(repository))).toBeUndefined();
-    expect(await instance.handler({ toolName: "bash", input: { command: updateCommand } }, context(repository))).toMatchObject({
+  } finally {
+    rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test("when a blocked API update does not match creation approval, still permits the approved creation", async () => {
+  // Arrange
+  const repository = checkout();
+  const update = { toolName: "bash", input: { command: `gh api repos/${external}/issues/12 --method PATCH -f body="Changed"` } };
+  const create = { toolName: "bash", input: { command: `gh api repos/${external}/issues --method POST -f title="Created" -f body="Body"` } };
+  try {
+    const instance = guard();
+    recordExternalApproval(instance, `Allow one GitHub issue creation in ${external}?`);
+    await instance.handler(update, context(repository));
+
+    // Act / Assert
+    expect(await instance.handler(create, context(repository))).toBeUndefined();
+  } finally {
+    rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test("when an approved creation clears a pending API update, requests fresh confirmation for the update", async () => {
+  // Arrange
+  const repository = checkout();
+  const update = { toolName: "bash", input: { command: `gh api repos/${external}/issues/12 --method PATCH -f body="Changed"` } };
+  const create = { toolName: "bash", input: { command: `gh api repos/${external}/issues --method POST -f title="Created" -f body="Body"` } };
+  try {
+    const instance = guard();
+    recordExternalApproval(instance, `Allow one GitHub issue creation in ${external}?`);
+    await instance.handler(update, context(repository));
+    await instance.handler(create, context(repository));
+
+    // Act / Assert
+    expect(await instance.handler(update, context(repository))).toMatchObject({
+      block: true,
       reason: expect.stringContaining("OMP ask confirmation requested"),
     });
   } finally {
@@ -226,13 +322,33 @@ test("when UI is unavailable, preserves approval for a later interactive retry",
   try {
     const instance = guard();
     const event = { toolName: "write", input: { i: "create issue", path: "xd://github", content: JSON.stringify({ op: "issue_create", repo: external, title: "UI-bound issue" }) } };
+    await instance.handler(event, context(repository));
+    approve(instance, "GitHub issue creation", external, "\nIssue title: UI-bound issue");
+    await instance.handler(event, context(repository, false));
+
     // Act / Assert
+    expect(await instance.handler(event, context(repository))).toBeUndefined();
+  } finally {
+    rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test("when an interactive retry consumes approval after a headless attempt, blocks the next interactive retry", async () => {
+  // Arrange
+  const repository = checkout();
+  const instance = guard();
+  const event = { toolName: "write", input: { i: "create issue", path: "xd://github", content: JSON.stringify({ op: "issue_create", repo: external, title: "UI-bound issue" }) } };
+  try {
     await instance.handler(event, context(repository));
     approve(instance, "GitHub issue creation", external, "\nIssue title: UI-bound issue");
     await instance.handler(event, context(repository, false));
     await instance.handler(event, context(repository));
-    const result = await instance.handler(event, context(repository));
-    expect(result).toMatchObject({ block: true });
+
+    // Act / Assert
+    expect(await instance.handler(event, context(repository))).toMatchObject({
+      block: true,
+      reason: expect.stringContaining("OMP ask confirmation requested"),
+    });
   } finally {
     rmSync(repository, { recursive: true, force: true });
   }
@@ -271,29 +387,77 @@ test("when an approved destination changes, rejects the retry", async () => {
     rmSync(repository, { recursive: true, force: true });
   }
 });
-test("when body text names another target, confirms the API endpoint repository", async () => {
+
+const endpointRepository = "klondikemarlen/marlens-skills-rules-and-tools";
+const issueWithRepositoryInBody = {
+  toolName: "bash",
+  input: {
+    command: `gh api --method POST repos/${endpointRepository}/issues -f title='Enforce PR Review Reactions Before Thread Resolution' -f body='Target repository: command/api' --jq '{number, html_url, title}'`,
+  },
+};
+
+test("when body text names another target, blocks the external API write pending confirmation", async () => {
   // Arrange
   const repository = checkout();
-  const target = "klondikemarlen/marlens-skills-rules-and-tools";
-  const command = `gh api --method POST repos/${target}/issues -f title='Enforce PR Review Reactions Before Thread Resolution' -f body='Target repository: command/api' --jq '{number, html_url, title}'`;
-  const event = { toolName: "bash", input: { command } };
+  const instance = guard();
   try {
-    const instance = guard();
     // Act / Assert
-    expect(await instance.handler(event, context(repository))).toMatchObject({ block: true });
-    expect(instance.messages).toHaveLength(1);
-    const message = instance.messages[0]!;
-    const start = message.indexOf("{");
-    const end = message.indexOf("}. If approved", start) + 1;
-    const ask = JSON.parse(message.slice(start, end)) as { html: string };
-    expect(ask.html).toContain(`\nTarget repository: ${target}`);
-    expect(ask.html).not.toContain("\nTarget repository: command/api");
-    approve(instance, "GitHub API write", target);
-    expect(await instance.handler(event, context(repository))).toBeUndefined();
+    expect(await instance.handler(issueWithRepositoryInBody, context(repository))).toMatchObject({
+      block: true,
+      reason: expect.stringContaining("OMP ask confirmation requested"),
+    });
   } finally {
     rmSync(repository, { recursive: true, force: true });
   }
 });
+
+test("when body text names another target, confirms the API endpoint repository", async () => {
+  // Arrange
+  const repository = checkout();
+  const instance = guard();
+  try {
+    // Act
+    await instance.handler(issueWithRepositoryInBody, context(repository));
+    const ask = requestedAsk(instance.messages[0]);
+
+    // Assert
+    expect(ask.html.match(/^Target repository: .+$/gm)).toEqual([`Target repository: ${endpointRepository}`]);
+  } finally {
+    rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test("when body text names another target, requests confirmation only once", async () => {
+  // Arrange
+  const repository = checkout();
+  const instance = guard();
+  try {
+    // Act
+    await instance.handler(issueWithRepositoryInBody, context(repository));
+
+    // Assert
+    expect(instance.deliveries).toEqual(["steer"]);
+  } finally {
+    rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test("when the endpoint repository is approved despite a different target in the body, permits the API write", async () => {
+  // Arrange
+  const repository = checkout();
+  const instance = guard();
+  try {
+    await instance.handler(issueWithRepositoryInBody, context(repository));
+    approve(instance, "GitHub API write", endpointRepository);
+
+    // Act / Assert
+    expect(await instance.handler(issueWithRepositoryInBody, context(repository))).toBeUndefined();
+  } finally {
+    rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+const recoverableIssue = { toolName: "bash", input: { command: `gh issue create --repo ${external} --title "Recovery"` } };
 const recoverableResults = [
   { name: "cancelled", details: { answers: [] }, isError: false },
   { name: "errored", details: nativeAskApproval.details, isError: true },
@@ -305,22 +469,56 @@ for (const result of recoverableResults) {
   test(`when the confirmation result is ${result.name}, blocks and requests a fresh confirmation`, async () => {
     // Arrange
     const repository = checkout();
-    const event = { toolName: "bash", input: { command: `gh issue create --repo ${external} --title "Recovery"` } };
     try {
       const instance = guard();
-      await instance.handler(event, context(repository));
-      const message = instance.messages[0]!;
-      const start = message.indexOf("{");
-      const end = message.indexOf("}. If approved", start) + 1;
-      const ask = JSON.parse(message.slice(start, end)) as Record<string, unknown>;
-      // Act
+      await instance.handler(recoverableIssue, context(repository));
+      const ask = requestedAsk(instance.messages[0]);
       instance.answer({ toolName: "ask", input: ask, details: result.details, isError: result.isError });
-      const retry = await instance.handler(event, context(repository));
+
+      // Act / Assert
+      expect(await instance.handler(recoverableIssue, context(repository))).toMatchObject({
+        block: true,
+        reason: expect.stringContaining("timed out, or unsupported; no approval was recorded. A new confirmation is required. OMP ask confirmation requested."),
+      });
+    } finally {
+      rmSync(repository, { recursive: true, force: true });
+    }
+  });
+
+  test(`when the confirmation result is ${result.name}, delivers one fresh prompt on retry`, async () => {
+    // Arrange
+    const repository = checkout();
+    try {
+      const instance = guard();
+      await instance.handler(recoverableIssue, context(repository));
+      const originalPrompt = instance.messages[0];
+      const ask = requestedAsk(originalPrompt);
+      instance.answer({ toolName: "ask", input: ask, details: result.details, isError: result.isError });
+
+      // Act
+      await instance.handler(recoverableIssue, context(repository));
+
       // Assert
-      expect(retry).toMatchObject({ block: true, reason: expect.stringContaining("unsupported") });
-      expect(instance.messages).toHaveLength(2);
-      approve(instance, "GitHub issue creation", external);
-      expect(await instance.handler(event, context(repository))).toBeUndefined();
+      expect(instance.messages).toEqual([originalPrompt, originalPrompt]);
+    } finally {
+      rmSync(repository, { recursive: true, force: true });
+    }
+  });
+
+  test(`when a fresh prompt replaces a ${result.name} confirmation result, permits the retry after approval`, async () => {
+    // Arrange
+    const repository = checkout();
+    try {
+      const instance = guard();
+      await instance.handler(recoverableIssue, context(repository));
+      const ask = requestedAsk(instance.messages[0]);
+      instance.answer({ toolName: "ask", input: ask, details: result.details, isError: result.isError });
+      await instance.handler(recoverableIssue, context(repository));
+      const freshAsk = requestedAsk(instance.messages[1]);
+      instance.answer({ ...nativeAskApproval, input: freshAsk });
+
+      // Act / Assert
+      expect(await instance.handler(recoverableIssue, context(repository))).toBeUndefined();
     } finally {
       rmSync(repository, { recursive: true, force: true });
     }
@@ -333,47 +531,76 @@ test("when the confirmation is explicitly rejected, keeps the retry blocked", as
   const event = { toolName: "bash", input: { command: `gh issue create --repo ${external} --title "Explicit rejection"` } };
   try {
     const instance = guard();
-    expect(await instance.handler(event, context(repository))).toMatchObject({ block: true });
-    const message = instance.messages[0]!;
-    const start = message.indexOf("{");
-    const end = message.indexOf("}. If approved", start) + 1;
-    const ask = JSON.parse(message.slice(start, end)) as Record<string, unknown>;
-    // Act
+    await instance.handler(event, context(repository));
+    const ask = requestedAsk(instance.messages[0]);
     instance.answer({ toolName: "ask", input: ask, details: { answers: [{ name: "confirm_repository_boundary_mutation", answer: "Reject" }] }, isError: false });
 
-    const retry = await instance.handler(event, context(repository));
-    // Assert
-    expect(retry).toMatchObject({ reason: expect.stringContaining("previous confirmation was not approved") });
-    expect(instance.messages).toHaveLength(1);
+    // Act / Assert
+    expect(await instance.handler(event, context(repository))).toMatchObject({
+      block: true,
+      reason: expect.stringContaining("previous confirmation was not approved"),
+    });
   } finally {
     rmSync(repository, { recursive: true, force: true });
   }
 });
 
-test("when external approval arrives after plugin reload, permits one matching write", async () => {
+test("when the confirmation is explicitly rejected, does not issue a second prompt on retry", async () => {
+  // Arrange
+  const repository = checkout();
+  const instance = guard();
+  const event = { toolName: "bash", input: { command: `gh issue create --repo ${external} --title "Explicit rejection"` } };
+  try {
+    await instance.handler(event, context(repository));
+    const originalPrompt = instance.messages[0];
+    const ask = requestedAsk(originalPrompt);
+    instance.answer({ toolName: "ask", input: ask, details: { answers: [{ name: "confirm_repository_boundary_mutation", answer: "Reject" }] }, isError: false });
+
+    // Act
+    await instance.handler(event, context(repository));
+
+    // Assert
+    expect(instance.messages).toEqual([originalPrompt]);
+  } finally {
+    rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test("when external approval arrives after plugin reload, permits the matching write", async () => {
   // Arrange
   const repository = checkout();
   const event = { toolName: "bash", input: { command: `gh issue create --repo ${external} --title "Reloaded"` } };
   try {
     const first = guard();
-    // Act / Assert
-    expect(await first.handler(event, context(repository))).toMatchObject({ block: true });
-    const handoff = repositoryMutationHandoff(event, repository);
-    if (handoff.decision !== "ask") throw new Error("missing confirmation handoff");
-    const externalQuestion = handoff.question
-      .split("\n")
-      .filter((line) => !line.startsWith("Current repository:") && !line.startsWith("Target repository:"))
-      .join("\n");
-
+    await first.handler(event, context(repository));
+    const question = externalQuestionFor(event, repository);
     const reloaded = guard();
-    reloaded.answer({
-      toolName: "ask",
-      input: { questions: [{ id: "confirm_external_github_write", question: externalQuestion }] },
-      details: { selectedOptions: ["Approve"] },
-      isError: false,
-    });
+    recordExternalApproval(reloaded, question);
+
+    // Act / Assert
     expect(await reloaded.handler(event, context(repository))).toBeUndefined();
-    expect(await reloaded.handler(event, context(repository))).toMatchObject({ block: true });
+  } finally {
+    rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test("when a matching write consumes post-reload external approval, blocks the next write", async () => {
+  // Arrange
+  const repository = checkout();
+  const event = { toolName: "bash", input: { command: `gh issue create --repo ${external} --title "Reloaded"` } };
+  try {
+    const first = guard();
+    await first.handler(event, context(repository));
+    const question = externalQuestionFor(event, repository);
+    const reloaded = guard();
+    recordExternalApproval(reloaded, question);
+    await reloaded.handler(event, context(repository));
+
+    // Act / Assert
+    expect(await reloaded.handler(event, context(repository))).toMatchObject({
+      block: true,
+      reason: expect.stringContaining("OMP ask confirmation requested"),
+    });
   } finally {
     rmSync(repository, { recursive: true, force: true });
   }
@@ -385,14 +612,69 @@ test("when the plugin reloads, discards its in-memory approval", async () => {
   const event = { toolName: "bash", input: { command: `gh issue create --repo ${external} --title "Not persisted"` } };
   try {
     const first = guard();
-    // Act / Assert
-    expect(await first.handler(event, context(repository))).toMatchObject({ block: true });
+    await first.handler(event, context(repository));
     approve(first, "GitHub issue creation", external);
 
     const reloaded = guard();
-    expect(await reloaded.handler(event, context(repository))).toMatchObject({ block: true });
-    expect(reloaded.messages).toHaveLength(1);
+    // Act / Assert
+    expect(await reloaded.handler(event, context(repository))).toMatchObject({
+      block: true,
+      reason: expect.stringContaining("OMP ask confirmation requested"),
+    });
   } finally {
     rmSync(repository, { recursive: true, force: true });
   }
 });
+
+test("when a locally approved invocation is retried after reload, sends one new approval prompt", async () => {
+  // Arrange
+  const repository = checkout();
+  const event = { toolName: "bash", input: { command: `gh issue create --repo ${external} --title "Not persisted"` } };
+  try {
+    const first = guard();
+    await first.handler(event, context(repository));
+    approve(first, "GitHub issue creation", external);
+    const reloaded = guard();
+
+    // Act
+    await reloaded.handler(event, context(repository));
+
+    // Assert
+    expect(reloaded.messages).toEqual([
+      expect.stringContaining(`Target repository: ${external}`),
+    ]);
+  } finally {
+    rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+function requestedAsk(message: string | undefined): { html: string } {
+  if (!message) {
+    throw new Error("missing confirmation request");
+  }
+
+  const start = message.indexOf("{");
+  const end = message.indexOf("}. If approved", start) + 1;
+  return JSON.parse(message.slice(start, end)) as { html: string };
+}
+
+function recordExternalApproval(instance: Guard, question: string): void {
+  instance.answer({
+    toolName: "ask",
+    input: { questions: [{ id: "confirm_external_github_write", question }] },
+    details: { selectedOptions: ["Approve"] },
+    isError: false,
+  });
+}
+
+function externalQuestionFor(event: ToolCallEvent, repository: string): string {
+  const handoff = repositoryMutationHandoff(event, repository);
+  if (handoff.decision !== "ask") {
+    throw new Error("missing confirmation handoff");
+  }
+
+  return handoff.question
+    .split("\n")
+    .filter((line) => !line.startsWith("Current repository:") && !line.startsWith("Target repository:"))
+    .join("\n");
+}

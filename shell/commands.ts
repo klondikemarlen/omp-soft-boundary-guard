@@ -6,27 +6,11 @@ const REDIRECTIONS: Record<string, true> = { "<": true, ">": true, ">>": true, "
 // Only split the heredoc form we can recognize without interpreting shell code.
 const ISSUE_COMMENT_HEREDOC = /^([ \t]*gh[ \t]+issue[ \t]+comment[ \t][^\n]*)<<[ \t]*(['"])([A-Za-z_][A-Za-z0-9_]*)\2[ \t]*\n/;
 const SIMPLE_SHELL_LINE = /^(?:[^'"`$\\#{}()<\r\n]|<(?!<)|'[^'\r\n]*'|"[^"`$\\\r\n]*")*$/;
-const COMPOUND_COMMAND_WORDS: Record<string, true> = {
-  if: true,
-  then: true,
-  elif: true,
-  else: true,
-  fi: true,
-  for: true,
-  select: true,
-  while: true,
-  until: true,
-  do: true,
-  done: true,
-  case: true,
-  esac: true,
-  function: true,
-  coproc: true,
-  time: true,
-  "!": true,
-  "[[": true,
-};
-
+const COMPOUND_COMMAND_WORDS = new Set([
+  "if", "then", "elif", "else", "fi",
+  "for", "select", "while", "until", "do", "done",
+  "case", "esac", "function", "coproc", "time", "!", "[[",
+]);
 
 export type ShellCommandSegment = {
   words: (string | undefined)[];
@@ -100,7 +84,7 @@ function issueCommentSegments(command: string): ShellCommandSegment[] | undefine
     let uncertainSegment: ShellCommandSegment | undefined;
     if (isSimpleLine) {
       uncertainSegment = lineSegments.find(({ words: [firstWord] }) =>
-        firstWord !== undefined && COMPOUND_COMMAND_WORDS[firstWord] === true,
+        firstWord !== undefined && COMPOUND_COMMAND_WORDS.has(firstWord),
       );
     } else {
       uncertainSegment = lineSegments[0];

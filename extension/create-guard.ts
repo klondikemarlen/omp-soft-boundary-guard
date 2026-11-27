@@ -4,7 +4,7 @@ import { createOmpBoundaryClassifier } from "../boundary/omp-classifier.ts";
 import { isActiveBoundaryPolicy, type ActiveBoundaryPolicy } from "../boundary/policy.ts";
 import type { ExtensionAPI, ToolCallResult, ToolInput } from "./contract.ts";
 import { AuthorizationState } from "./authorization-state.ts";
-import { currentCheckoutRoot } from "../git/current-checkout.ts";
+import { checkoutOriginRepository, currentCheckoutRoot } from "../git/current-checkout.ts";
 import { retryIdentity } from "../guard/authorization-key.ts";
 import { externalConfirmationQuestionId, submittedConfirmationQuestion } from "../guard/approved-confirmation.ts";
 import { askHandoff, type RepositoryMutationHandoff } from "../guard/ask.ts";
@@ -220,8 +220,13 @@ export function createRepositoryBoundaryGuard(options: BoundaryGuardOptions = {}
           const isExternalAsk = event.toolName === "ask" &&
             submittedConfirmationQuestion(event.input, externalConfirmationQuestionId) !== undefined;
           if (mayAffectLiveState || isExternalAsk) {
-            checkoutRoot = currentCheckoutRoot(context.cwd) ?? context.cwd;
-            authorization.resetFor(checkoutRoot, reportedCurrentRepository(resolvedHandoff));
+            const observedRoot = currentCheckoutRoot(context.cwd);
+            checkoutRoot = observedRoot ?? context.cwd;
+            let currentRepository = reportedCurrentRepository(resolvedHandoff);
+            if (isExternalAsk && observedRoot !== undefined) {
+              currentRepository = checkoutOriginRepository(observedRoot) ?? null;
+            }
+            authorization.resetFor(checkoutRoot, currentRepository);
             lastObservedCwd = context.cwd;
           }
         }

@@ -48,6 +48,8 @@ This project has no equivalent custom folder-only approval engine to remove. Rem
 
 `bun run handoff` reads `{"event":{"toolName":…,"input":…},"cwd":"…"}` from standard input and writes one JSON packet. Its `decision` is `allow` or `ask`; an `ask` packet includes the exact OMP HTML-form Ask payload, confirmation question and field name, active repository, resolved mutation target, action, and exact-retry fingerprint.
 
+For a recognized `git push` to a named remote, the guard reads all configured push URLs without contacting the remote. The handoff's `target` lists distinct resolved GitHub repositories in push order, separated by `, ` when there is more than one. When approval is requested, the same list is shown and bound to the exact retry. A single repository is reported as before. Unresolved destinations are not listed and do not hide a known external repository; if none resolve, the guard still fails open.
+
 ```bash
 printf '%s\n' '{"event":{"toolName":"bash","input":{"command":"git push https://github.com/elsewhere/example.git HEAD"}}}' | bun run handoff
 ```

@@ -299,7 +299,11 @@ test("when the default push remote changes after approval, names the new target 
     await instance.handler(event, context(repository));
 
     // Assert
-    expect(instance.messages.at(-1)).toContain(changed);
+    expect([originalRequest, changedRequest, approvedRetry]).toEqual([
+      expect.objectContaining({ block: true }),
+      expect.objectContaining({ block: true }),
+      undefined,
+    ]);
   } finally {
     rmSync(repository, { recursive: true, force: true });
   }

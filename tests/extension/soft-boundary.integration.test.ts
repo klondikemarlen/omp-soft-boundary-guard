@@ -4,6 +4,7 @@ import { rmSync } from "node:fs";
 import {
   activateReviewedPolicy,
   AdvisoryRecorder,
+  type BoundaryClassificationResult,
   createPolicyState,
   reviewPolicy,
 } from "../../index.ts";
@@ -22,7 +23,7 @@ const allowedClassifications = [
   { classification: "inside", risk: "low", reason: "active checkout", mode: "strict", enforce: true },
   { classification: "uncertain", risk: "low", reason: "ambiguous but low impact", mode: "strict", enforce: true },
   { classification: "outside", risk: "high", reason: "production target", mode: "advisory", enforce: false },
-] as const;
+] satisfies Array<BoundaryClassificationResult & { mode: string; enforce: boolean }>;
 
 test.each(allowedClassifications)(
   "when $mode mode classifies a write as $risk risk and $classification, lets it proceed",

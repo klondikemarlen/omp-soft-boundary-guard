@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.1.8
+
+- A `gh issue comment` that reads a quoted heredoc with `--body-file -` no longer treats Markdown in its body as a repository. A subsequent read-back stays separate, and external comments still require approval for the exact submitted command.
+
 ## 2.1.7
 
 - Local boundary tests now distinguish shared worktrees and same-origin checkouts from unrelated repositories outside the temporary-path exemption. Runtime policy is unchanged.

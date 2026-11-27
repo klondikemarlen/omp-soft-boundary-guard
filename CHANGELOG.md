@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.1.11
+
+- Release checks compare the candidate with the highest stable version tag available locally, including tags outside the current branch. Nonrelease tags are ignored; a failed Git query stops the check.
+
 ## 2.1.10
 
 - Pending confirmations and one-shot approvals follow the canonical checkout, not the identity of each operation. An observed change of checkout or known origin clears them, including when the intervening write was allowed.

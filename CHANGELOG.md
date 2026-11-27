@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.1.14
+
+- Push decisions include every resolved repository configured for the selected remote, in push order. Git config classification distinguishes operation flags from values and paths.
+
 ## 2.1.13
 
 - Early external approval now records the invoking origin. Retrying a rejected release stays blocked without prompting again or spending an approval for a different release.

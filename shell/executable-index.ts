@@ -1,4 +1,4 @@
-export function executableIndex(words: (string | undefined)[]): number {
+export function executableIndex(words: readonly (string | undefined)[]): number {
   let index = 0;
   while (true) {
     const word = words[index];

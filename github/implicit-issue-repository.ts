@@ -4,7 +4,7 @@ import { remoteRepository } from "./remote-repository.ts";
 
 type IssueRepositoryOptions = {
   env?: NodeJS.ProcessEnv;
-  shellWords?: (string | undefined)[];
+  shellWords?: readonly (string | undefined)[];
   nonInteractive?: boolean;
 };
 
@@ -61,7 +61,8 @@ function githubEnvironment(inherited: NodeJS.ProcessEnv, words: IssueRepositoryO
   }
 
   const overrides: NodeJS.ProcessEnv = {};
-  for (const assignment of words.slice(0, index)) {
+  for (let position = 0; position < index; position += 1) {
+    const assignment = words[position];
     if (assignment === undefined) {
       return undefined;
     }

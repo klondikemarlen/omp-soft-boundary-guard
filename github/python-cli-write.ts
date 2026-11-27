@@ -6,6 +6,25 @@ import { githubCliWrite } from "./cli-write.ts";
 import type { GitHubWrite } from "./write.ts";
 
 type PythonNode = SyntaxNode;
+type SubprocessMethod = "run" | "check_output";
+
+const ISSUE_VALUE_OPTIONS: Record<string, "payload" | "literal"> = {
+  "--title": "payload",
+  "-t": "payload",
+  "--body": "payload",
+  "-b": "payload",
+  "--assignee": "literal",
+  "-a": "literal",
+  "--body-file": "literal",
+  "-F": "literal",
+  "--label": "literal",
+  "-l": "literal",
+  "--milestone": "literal",
+  "-m": "literal",
+  "--project": "literal",
+  "--repo": "literal",
+  "-R": "literal",
+};
 
 function children(node: PythonNode): PythonNode[] {
   const result: PythonNode[] = [];
@@ -53,7 +72,7 @@ function pythonString(node: PythonNode, source: string): string | undefined {
   return value;
 }
 
-function literalArgv(node: PythonNode, source: string): string[] | undefined {
+function argvWords(node: PythonNode, source: string): (string | undefined)[] | undefined {
   if (node.name !== "ArrayExpression") {
     return undefined;
   }
@@ -63,7 +82,7 @@ function literalArgv(node: PythonNode, source: string): string[] | undefined {
     return undefined;
   }
 
-  const words: string[] = [];
+  const words: (string | undefined)[] = [];
   let expectingValue = true;
   for (const child of childrenInArray.slice(1, -1)) {
     if (child.name === ",") {
@@ -79,16 +98,65 @@ function literalArgv(node: PythonNode, source: string): string[] | undefined {
       return undefined;
     }
 
-    const word = pythonString(child, source);
-    if (word === undefined) {
-      return undefined;
-    }
+    if (child.name === "VariableName") {
+      words.push(undefined);
+    } else {
+      const word = pythonString(child, source);
+      if (word === undefined) {
+        return undefined;
+      }
 
-    words.push(word);
+      words.push(word);
+    }
     expectingValue = false;
   }
 
   return words.length ? words : undefined;
+}
+
+function issueCreationWithOpaquePayload(words: (string | undefined)[]): string[] | undefined {
+  const literalWords = ["gh", "issue", "create"];
+  for (let index = 3; index < words.length; index += 1) {
+    const option = words[index];
+    if (option === undefined) {
+      return undefined;
+    }
+
+    const equals = option.indexOf("=");
+    let optionName = option;
+    if (equals !== -1) {
+      optionName = option.slice(0, equals);
+    }
+
+    const valueKind = ISSUE_VALUE_OPTIONS[optionName];
+    if (valueKind !== "payload" && valueKind !== "literal") {
+      return undefined;
+    }
+
+    if (equals !== -1) {
+      literalWords.push(option);
+      continue;
+    }
+
+    if (index + 1 >= words.length) {
+      return undefined;
+    }
+
+    const value = words[index + 1];
+    index += 1;
+    if (value !== undefined) {
+      literalWords.push(option, value);
+      continue;
+    }
+
+    if (valueKind !== "payload") {
+      return undefined;
+    }
+
+    // Omit the data-only pair so the variable cannot affect repository or description inference.
+  }
+
+  return literalWords;
 }
 
 function allowedKeyword(name: string, value: PythonNode, source: string): boolean {
@@ -103,7 +171,7 @@ function allowedKeyword(name: string, value: PythonNode, source: string): boolea
   return value.name === "Boolean" && ["True", "False"].includes(source.slice(value.from, value.to));
 }
 
-function subprocessArgv(call: PythonNode, source: string): string[] | undefined {
+function subprocessMethod(call: PythonNode, source: string): SubprocessMethod | undefined {
   const callee = call.getChild("MemberExpression");
   const calleeParts = callee ? children(callee) : [];
   if (
@@ -111,9 +179,22 @@ function subprocessArgv(call: PythonNode, source: string): string[] | undefined 
     calleeParts[0].name !== "VariableName" ||
     source.slice(calleeParts[0].from, calleeParts[0].to) !== "subprocess" ||
     calleeParts[1].name !== "." ||
-    calleeParts[2].name !== "PropertyName" ||
-    source.slice(calleeParts[2].from, calleeParts[2].to) !== "run"
+    calleeParts[2].name !== "PropertyName"
   ) {
+    return undefined;
+  }
+
+  const method = source.slice(calleeParts[2].from, calleeParts[2].to);
+  if (method === "run" || method === "check_output") {
+    return method;
+  }
+
+  return undefined;
+}
+
+function subprocessArgv(call: PythonNode, source: string): string[] | undefined {
+  const method = subprocessMethod(call, source);
+  if (!method) {
     return undefined;
   }
 
@@ -137,18 +218,44 @@ function subprocessArgv(call: PythonNode, source: string): string[] | undefined 
     }
 
     const keyword = source.slice(name.from, name.to);
-    if (keywordNames.has(keyword) || !allowedKeyword(keyword, value, source)) {
+    if (keywordNames.has(keyword)) {
+      return undefined;
+    }
+
+    if (method === "check_output") {
+      if (keyword !== "text" || value.name !== "Boolean" || source.slice(value.from, value.to) !== "True") {
+        return undefined;
+      }
+    } else if (!allowedKeyword(keyword, value, source)) {
       return undefined;
     }
 
     keywordNames.add(keyword);
   }
 
-  if (keywordParts.length % 3 !== 0) {
+  if (method === "check_output" && !keywordNames.has("text")) {
     return undefined;
   }
 
-  return literalArgv(argvNode, source);
+  const words = argvWords(argvNode, source);
+  if (!words) {
+    return undefined;
+  }
+
+  const isIssueCreation = words[0] === "gh" && words[1] === "issue" && words[2] === "create";
+  if (method === "check_output" && !isIssueCreation) {
+    return undefined;
+  }
+
+  if (words.every((word): word is string => word !== undefined)) {
+    return words;
+  }
+
+  if (!isIssueCreation) {
+    return undefined;
+  }
+
+  return issueCreationWithOpaquePayload(words);
 }
 
 export function pythonGitHubCliWrites(input: ToolInput, source: string): GitHubWrite | undefined {

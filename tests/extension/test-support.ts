@@ -71,6 +71,10 @@ export function context(cwd: string, hasUI = true) {
 }
 
 export function approve(guard: Guard, _action: string, _target: string, _detail = "") {
+  answerConfirmation(guard, "Approve");
+}
+
+export function answerConfirmation(guard: Guard, answer: "Approve" | "Reject"): void {
   const message = guard.messages.at(-1);
   if (!message) throw new Error("missing confirmation request");
   const start = message.indexOf("{");
@@ -81,7 +85,7 @@ export function approve(guard: Guard, _action: string, _target: string, _detail 
   guard.answer({
     toolName: "ask",
     input,
-    details: { answers: [{ name, answer: "Approve" }] },
+    details: { answers: [{ name, answer }] },
     isError: false,
   });
 }

@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.1.10
+
+- Pending confirmations and one-shot approvals follow the canonical checkout, not the identity of each operation. An observed change of checkout or known origin clears them, including when the intervening write was allowed.
+
 ## 2.1.9
 
 - Compound release commands now resolve each segment's explicit repository or execution checkout independently. A known external destination still produces an advisory warning, or a confirmation for the full command in strict mode.

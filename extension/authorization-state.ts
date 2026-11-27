@@ -27,15 +27,29 @@ export class AuthorizationState {
   #mismatchedKey: string | undefined;
   #unsupportedKey: string | undefined;
   #externalQuestion: string | undefined;
-  #sessionDirectory: string | undefined;
+  #checkoutRoot: string | undefined;
+  #currentRepository: string | null | undefined;
 
-  resetFor(directory: string): void {
-    if (this.#sessionDirectory === undefined) {
-      this.#sessionDirectory = directory;
+  get hasLiveState(): boolean {
+    return this.#pending !== undefined || this.#authorized !== undefined ||
+      this.#rejectedKey !== undefined || this.#mismatchedKey !== undefined ||
+      this.#unsupportedKey !== undefined || this.#externalQuestion !== undefined;
+  }
+
+  resetFor(checkoutRoot: string, currentRepository?: string | null): void {
+    const changedCheckout = this.#checkoutRoot !== undefined && this.#checkoutRoot !== checkoutRoot;
+    // An unreported origin is not evidence that a previously observed origin changed.
+    const changedRepository = currentRepository !== undefined && this.#currentRepository !== undefined &&
+      this.#currentRepository !== currentRepository;
+    this.#checkoutRoot = checkoutRoot;
+    if (changedCheckout || currentRepository !== undefined) {
+      this.#currentRepository = currentRepository;
+    }
+
+    if (!changedCheckout && !changedRepository) {
       return;
     }
-    if (this.#sessionDirectory === directory) return;
-    this.#sessionDirectory = directory;
+
     this.#pending = undefined;
     this.#authorized = undefined;
     this.#rejectedKey = undefined;

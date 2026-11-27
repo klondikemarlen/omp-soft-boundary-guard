@@ -6,6 +6,7 @@ import type { ExtensionAPI, ToolCallResult, ToolInput } from "./contract.ts";
 import { AuthorizationState } from "./authorization-state.ts";
 import { currentCheckoutRoot } from "../git/current-checkout.ts";
 import { retryIdentity } from "../guard/authorization-key.ts";
+import { externalConfirmationQuestionId, submittedConfirmationQuestion } from "../guard/approved-confirmation.ts";
 import { askHandoff, type RepositoryMutationHandoff } from "../guard/ask.ts";
 import type { BoundaryCategory } from "../guard/confirmation-question.ts";
 import { repositoryMutationHandoff } from "../guard/handoff.ts";
@@ -57,19 +58,15 @@ function classifierFor(
   return createOmpBoundaryClassifier(context);
 }
 
-function sessionScope(handoff: AskHandoff, cwd: string): string {
-  const root = currentCheckoutRoot(cwd) ?? cwd;
-  return `${root}\u0000${handoff.currentRepository ?? handoff.fingerprint}`;
-}
+function reportedCurrentRepository(handoff: RepositoryMutationHandoff): string | null | undefined {
+  if (handoff.decision === "ask" && handoff.category === "local") {
+    return undefined;
+  }
+  if (!("currentRepository" in handoff)) {
+    return undefined;
+  }
 
-function authorizationIdentity(
-  authorization: AuthorizationState,
-  event: { toolName: string; input: Record<string, unknown> },
-  cwd: string,
-  scope: string,
-): string {
-  authorization.resetFor(scope);
-  return retryIdentity(event.toolName, event.input, cwd);
+  return handoff.currentRepository ?? null;
 }
 
 function reusableHandoff(
@@ -199,7 +196,13 @@ function requestConfirmation(
 export function createRepositoryBoundaryGuard(options: BoundaryGuardOptions = {}): (pi: ExtensionAPI) => void {
   return (pi) => {
     const authorization = new AuthorizationState();
-    pi.on("tool_result", (event) => authorization.record(event));
+    const tracksAuthorization = options.enforce === true || options.enforce === "github";
+    let lastObservedCwd: string | undefined;
+    pi.on("tool_result", (event) => {
+      if (tracksAuthorization) {
+        authorization.record(event);
+      }
+    });
 
     pi.on("tool_call", async (event, context): Promise<ToolCallResult> => {
       let revisedInput: ToolInput | undefined;
@@ -210,20 +213,20 @@ export function createRepositoryBoundaryGuard(options: BoundaryGuardOptions = {}
         const resolvedHandoff = repositoryMutationHandoff(event, context.cwd);
         revisedInput = resolvedHandoff.input;
         let handoff = resolvedHandoff;
-        let reusedHandoff = false;
-        let scope: string | undefined;
-        if (resolvedHandoff.decision === "ask" && shouldEnforce(options.enforce, resolvedHandoff)) {
-          scope = sessionScope(resolvedHandoff, context.cwd);
-          const identity = authorizationIdentity(authorization, event, context.cwd, scope);
-          const cachedHandoff = reusableHandoff(authorization, identity, resolvedHandoff);
-          if (cachedHandoff) {
-            handoff = cachedHandoff;
-            reusedHandoff = true;
+        let checkoutRoot: string | undefined;
+        if (tracksAuthorization && !shouldEnforce(options.enforce, resolvedHandoff)) {
+          const mayAffectLiveState = authorization.hasLiveState &&
+            (resolvedHandoff.action !== undefined || context.cwd !== lastObservedCwd);
+          const isExternalAsk = event.toolName === "ask" &&
+            submittedConfirmationQuestion(event.input, externalConfirmationQuestionId) !== undefined;
+          if (mayAffectLiveState || isExternalAsk) {
+            checkoutRoot = currentCheckoutRoot(context.cwd) ?? context.cwd;
+            authorization.resetFor(checkoutRoot, reportedCurrentRepository(resolvedHandoff));
+            lastObservedCwd = context.cwd;
           }
         }
 
         if (
-          !reusedHandoff &&
           handoff.decision === "allow" &&
           handoff.action !== undefined &&
           handoff.action !== "release/deploy" &&
@@ -263,9 +266,12 @@ export function createRepositoryBoundaryGuard(options: BoundaryGuardOptions = {}
           console.warn(warningFor(handoff));
           return inputResult(revisedInput);
         }
-        scope ??= sessionScope(handoff, context.cwd);
-        const identity = authorizationIdentity(authorization, event, context.cwd, scope);
-        return requestConfirmation(authorization, pi, handoff, event, context.hasUI, identity, revisedInput);
+        checkoutRoot ??= currentCheckoutRoot(context.cwd) ?? context.cwd;
+        authorization.resetFor(checkoutRoot, reportedCurrentRepository(resolvedHandoff));
+        lastObservedCwd = context.cwd;
+        const identity = retryIdentity(event.toolName, event.input, context.cwd);
+        const cachedHandoff = reusableHandoff(authorization, identity, handoff);
+        return requestConfirmation(authorization, pi, cachedHandoff ?? handoff, event, context.hasUI, identity, revisedInput);
       } catch {
         recordGuardFailure(options.recorder, event);
         return inputResult(revisedInput);

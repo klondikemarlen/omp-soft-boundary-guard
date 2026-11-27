@@ -115,7 +115,11 @@ export class AuthorizationState {
       return "authorized";
     }
     if (authorized) {
-      if (authorized.handoff?.category !== "release") this.#authorized = undefined;
+      if (authorized.handoff?.category !== "release") {
+        this.#authorized = undefined;
+      } else if (this.#rejectedKey === key) {
+        return "rejected";
+      }
       return "mismatched";
     }
 

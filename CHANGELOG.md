@@ -1,0 +1,7 @@
+# Changelog
+
+## Unreleased
+
+- Issue creation in a standalone, quoted Python heredoc can now request one-shot approval when the destination differs from the invoking checkout. The adapter recognizes direct `subprocess.check_output` with `text=True` and simple title or body variables; approval binds the submitted source, not mutable runtime data.
+- When `gh issue create` omits `--repo`, the guard checks supported `GH_REPO` overrides and CLI remote defaults in the execution checkout. Read-only upstream inspection does not change the authorization boundary. A bare `GH_REPO=owner/repo` requires `GH_HOST=github.com` for deterministic resolution.
+- Recognized issue creation with an unresolved repository, an unavailable approval UI, classifier failures, and guard exceptions produce fail-open diagnostics rather than implying approval.

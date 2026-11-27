@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 
@@ -363,31 +363,26 @@ test("when a prior command switches checkouts, retains no checkout state", async
   }
 });
 
-test("when tool directories are relative, resolves them from the session checkout", async () => {
-  // Arrange
+test("when a push specifies a relative tool cwd, resolves origin in that checkout", () => {
+  // Arrange: the same remote name points at different repositories in the two checkouts.
   const repository = checkout();
+  const destinationCheckout = checkout(`https://github.com/${external}.git`);
   try {
+    const event = {
+      toolName: "bash",
+      input: { command: "git push origin HEAD", cwd: relative(repository, destinationCheckout) },
+    };
 
-    mkdirSync(`${repository}/web`);
-    mkdirSync(`${repository}/api`);
-    const instance = guard();
-    // Act
-    await instance.handler(
-      { toolName: "bash", input: { command: "git status --short", cwd: "web" } },
-      context(repository),
-    );
-    await instance.handler(
-      { toolName: "bash", input: { command: "git status --short", cwd: "api" } },
-      context(repository),
-    );
-    // Act
-    const result = await instance.handler(
-      { toolName: "bash", input: { command: "git push origin HEAD" } },
-      context(repository),
-    );
-    // Assert
-    expect(result).toBeUndefined();
+    // Act / Assert
+    expect(repositoryMutationHandoff(event, repository)).toMatchObject({
+      decision: "ask",
+      action: "git push",
+      target: external,
+    });
+    expect(repositoryMutationHandoff({ ...event, input: { command: event.input.command } }, repository))
+      .toMatchObject({ decision: "allow" });
   } finally {
+    rmSync(destinationCheckout, { recursive: true, force: true });
     rmSync(repository, { recursive: true, force: true });
   }
 });

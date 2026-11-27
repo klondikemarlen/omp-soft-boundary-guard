@@ -8,7 +8,7 @@ Opt-in OMP extension that requires one-shot approval for recognized external Git
 - Mutating Git commands that resolve to a local checkout, including `git push`.
 - `gh issue` creation and updates, `gh pr` creation and updates, and mutating `gh api` requests.
 - Supported `xd://github` issue and pull-request writes.
-- Python `eval` calls containing direct `subprocess.run([...])` GitHub CLI invocations with literal argv.
+- Recognized GitHub CLI writes inside Python `eval` input or a standalone `python` or `python3` Bash heredoc with a quoted delimiter.
 
 When the active checkout and target resolve to different GitHub repositories, the installed extension blocks recognized GitHub writes before execution and requests the standard OMP Ask. The question shows the destination and command or Python code. Rejecting keeps that invocation blocked; approving permits one exact retry. Other recognized external mutations log a warning and proceed. Same-boundary mutations remain silent unless a reviewed policy produces an advisory warning.
 
@@ -19,7 +19,11 @@ The current built-in boundary is the invoking session's normalized GitHub `origi
 
 For recognized `xd://github` mutations that omit `repo`, the guard pins the tool's execution input to that normalized `origin`. This prevents another resolver from silently selecting a distinct configured remote such as `upstream`; explicit external repositories follow the installed approval path.
 
-Python recognition parses syntax without executing the supplied code or requiring a Python interpreter. It supports direct `subprocess.run` calls with a literal list of plain, unescaped string arguments, optional `input` supplied as a variable, and boolean `check`, `capture_output`, and `text` keywords. Aliases, dynamic argv, unsupported subprocess options, malformed code, and multiple recognized writes remain unresolved and fail open. Calls hidden inside Python strings or comments are not treated as executable writes.
+For `gh issue create`, the destination and the boundary are separate. A literal `--repo` names the destination; it does not authorize it. Without that flag, the guard checks `GH_REPO`, the CLI's configured default remote, then its noninteractive remote preference in the execution checkout. A bare `GH_REPO=owner/repo` needs an explicit `GH_HOST=github.com`; the guard does not read authentication files or query GitHub to guess a host or fork parent. Read-only inspection never changes the invoking session's boundary.
+
+The Python adapter parses source without running it. It recognizes direct `subprocess.run` with literal argv, optional variable `input`, and boolean `check`, `capture_output`, and `text` keywords. For issue creation it also recognizes direct `subprocess.check_output` with `text=True`; a title or body may be a simple variable. Approval binds the submitted source and resolved destination, not the future contents of a variable. Aliases, dynamic destinations, unsupported shell wrappers, malformed code, and multiple recognized writes are outside this guarantee.
+
+Recognized issue creation with an unresolved destination or checkout emits a fail-open diagnostic. Missing approval UI, classifier failures, and guard exceptions have separate diagnostics. These are not approvals; in advisory-only mode a resolved external write warns and proceeds.
 
 ## Native Folder Approvals
 
